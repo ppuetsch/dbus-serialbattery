@@ -104,7 +104,6 @@ class Battery(ABC):
         """
         return False
 
-
     def to_temp(self, sensor, value):
         """
         Keep the temp value between -20 and 100 to handle sensor issues or no data.
@@ -519,13 +518,19 @@ class Battery(ABC):
             return None
 
     def get_temp(self):
-        return self.extract_from_temp_values(extractor=lambda temp1, temp2: round((float(temp1)+ float(temp2))/2, 2))
+        return self.extract_from_temp_values(
+            extractor=lambda temp1, temp2: round((float(temp1) + float(temp2)) / 2, 2)
+        )
 
     def get_min_temp(self):
-        return self.extract_from_temp_values(extractor=lambda temp1, temp2: min(temp1, temp2))
+        return self.extract_from_temp_values(
+            extractor=lambda temp1, temp2: min(temp1, temp2)
+        )
 
     def get_max_temp(self):
-        return self.extract_from_temp_values(extractor=lambda temp1, temp2: max(temp1, temp2))
+        return self.extract_from_temp_values(
+            extractor=lambda temp1, temp2: max(temp1, temp2)
+        )
 
     def log_cell_data(self):
         if logger.getEffectiveLevel() > logging.INFO and len(self.cells) == 0:

@@ -171,8 +171,12 @@ class Jkbms(Battery):
             1 if is_bit_set(tmp[pos - 4]) or is_bit_set(tmp[pos - 8]) else 0
         )
 
-    def read_serial_data_jkbms(self, command):
-        # use the read_serial_data() function to read the data and then do BMS spesific checks (crc, start bytes, etc)
+    def read_serial_data_jkbms(self, command: str) -> bool:
+        """
+        use the read_serial_data() function to read the data and then do BMS specific checks (crc, start bytes, etc)
+        :param command: the command to be sent to the bms
+        :return: True if everything is fine, else False
+        """
         data = read_serial_data(
             command,
             self.port,

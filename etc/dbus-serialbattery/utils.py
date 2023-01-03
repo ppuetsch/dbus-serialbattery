@@ -4,6 +4,16 @@ import serial
 from time import sleep
 from struct import unpack_from
 import bisect
+from lltjbd import LltJbd
+from daly import Daly
+from ant import Ant
+from jkbms import Jkbms
+
+# from sinowealth import Sinowealth
+from renogy import Renogy
+from ecs import Ecs
+from lifepower import Lifepower
+
 
 # Logging
 logging.basicConfig()
@@ -13,17 +23,16 @@ logger.setLevel(logging.INFO)
 # battery types
 # if not specified: baud = 9600
 battery_types = [
-    {"bms": "LltJbd"},
-    {"bms": "Ant", "baud": 19200},
-    {"bms": "Daly", "address": b"\x40"},
-    {"bms": "Daly", "address": b"\x80"},
-    {"bms": "Jkbms", "baud": 115200},
-    #    {"bms" : "Sinowealth"},
-    {"bms": "Lifepower"},
-    {"bms": "Renogy", "address": b"\x30"},
-    {"bms": "Renogy", "address": b"\xF7"},
-    {"bms": "Ecs", "baud": 19200},
-    #    {"bms" : "MNB"},
+    {"bms": LltJbd, "baud": 9600},
+    {"bms": Ant, "baud": 19200},
+    {"bms": Daly, "baud": 9600, "address": b"\x40"},
+    {"bms": Daly, "baud": 9600, "address": b"\x80"},
+    {"bms": Jkbms, "baud": 115200},
+    #    {"bms" : Sinowealth},
+    {"bms": Lifepower, "baud": 9600},
+    {"bms": Renogy, "baud": 9600, "address": b"\x30"},
+    {"bms": Renogy, "baud": 9600, "address": b"\xF7"},
+    {"bms": Ecs, "baud": 19200},
 ]
 
 # Constants - Need to dynamically get them in future
@@ -267,7 +276,12 @@ def open_serial_port(port, baud):
 
 # Read data from previously openned serial port
 def read_serialport_data(
-    ser, command, length_pos, length_check, length_fixed=None, length_size=None
+    ser: serial.Serial,
+    command,
+    length_pos,
+    length_check,
+    length_fixed=None,
+    length_size=None,
 ):
     try:
         ser.flushOutput()
