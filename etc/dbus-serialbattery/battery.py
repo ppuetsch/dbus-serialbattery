@@ -3,6 +3,7 @@ from utils import *
 import math
 from datetime import timedelta
 from time import time
+from abc import ABC, abstractmethod
 
 
 class Protection(object):
@@ -31,7 +32,7 @@ class Cell:
         self.balance = balance
 
 
-class Battery(object):
+class Battery(ABC):
     def __init__(self, port, baud):
         self.port = port
         self.baud_rate = baud
@@ -75,40 +76,64 @@ class Battery(object):
 
         self.time_to_soc_update = TIME_TO_SOC_LOOP_CYCLES
 
+    @abstractmethod
     def test_connection(self):
         # Each driver must override this function to test if a connection can be made
         # return false when fail, true if successful
         return False
 
+    @abstractmethod
     def get_settings(self):
-        # Each driver must override this function to read/set the battery settings
-        # It is called once after a successful connection by DbusHelper.setup_vedbus()
-        # Values:  battery_type, version, hardware_version, min_battery_voltage, max_battery_voltage,
-        #   MAX_BATTERY_CHARGE_CURRENT, MAX_BATTERY_DISCHARGE_CURRENT, cell_count, capacity
-        # return false when fail, true if successful
+        """
+        Each driver must override this function to read/set the battery settings
+        It is called once after a successful connection by DbusHelper.setup_vedbus()
+        Values:  battery_type, version, hardware_version, min_battery_voltage, max_battery_voltage,
+        MAX_BATTERY_CHARGE_CURRENT, MAX_BATTERY_DISCHARGE_CURRENT, cell_count, capacity
+
+        :return: false when fail, true if successful
+        """
         return False
 
+    @abstractmethod
     def refresh_data(self):
-        # Each driver must override this function to read battery data and populate this class
-        # It is called each poll just before the data is published to vedbus
-        # return false when fail, true if successful
+        """
+        Each driver must override this function to read battery data and populate this class
+        It is called each poll just before the data is published to vedbus
+
+        :return:  false when fail, true if successful
+        """
         return False
+
 
     def to_temp(self, sensor, value):
-        # Keep the temp value between -20 and 100 to handle sensor issues or no data.
-        # The BMS should have already protected before those limits have been reached.
+        """
+        Keep the temp value between -20 and 100 to handle sensor issues or no data.
+        The BMS should have already protected before those limits have been reached.
+
+        :param sensor: temperature sensor number
+        :param value: the sensor value
+        :return:
+        """
         if sensor == 1:
             self.temp1 = min(max(value, -20), 100)
         if sensor == 2:
             self.temp2 = min(max(value, -20), 100)
 
     def manage_charge_voltage(self):
+        """
+        manages the charge voltage by setting self.control_voltage
+        :return: void
+        """
         if LINEAR_LIMITATION_ENABLE:
             self.manage_charge_voltage_linear()
         else:
             self.manage_charge_voltage_step()
 
     def manage_charge_voltage_linear(self):
+        """
+        manages the charge voltage using linear interpolation by setting self.control_voltage
+        :return: None
+        """
         foundHighCellVoltage = False
         if CVCM_ENABLE:
             currentBatteryVoltage = 0
@@ -134,6 +159,10 @@ class Battery(object):
             self.control_voltage = FLOAT_CELL_VOLTAGE * self.cell_count
 
     def manage_charge_voltage_step(self):
+        """
+        manages the charge voltage using a step function by setting self.control_voltage
+        :return: None
+        """
         voltageSum = 0
         if CVCM_ENABLE:
             for i in range(self.cell_count):
@@ -479,35 +508,24 @@ class Battery(object):
                 return 1
         return 0
 
-    def get_temp(self):
+    def extract_from_temp_values(self, extractor):
         if self.temp1 is not None and self.temp2 is not None:
-            return round((float(self.temp1) + float(self.temp2)) / 2, 2)
+            return extractor(self.temp1, self.temp2)
         if self.temp1 is not None and self.temp2 is None:
-            return round(float(self.temp1), 2)
+            return self.temp1
         if self.temp1 is None and self.temp2 is not None:
-            return round(float(self.temp2), 2)
+            return self.temp2
         else:
             return None
+
+    def get_temp(self):
+        return self.extract_from_temp_values(extractor=lambda temp1, temp2: round((float(temp1)+ float(temp2))/2, 2))
 
     def get_min_temp(self):
-        if self.temp1 is not None and self.temp2 is not None:
-            return min(self.temp1, self.temp2)
-        if self.temp1 is not None and self.temp2 is None:
-            return self.temp1
-        if self.temp1 is None and self.temp2 is not None:
-            return self.temp2
-        else:
-            return None
+        return self.extract_from_temp_values(extractor=lambda temp1, temp2: min(temp1, temp2))
 
     def get_max_temp(self):
-        if self.temp1 is not None and self.temp2 is not None:
-            return max(self.temp1, self.temp2)
-        if self.temp1 is not None and self.temp2 is None:
-            return self.temp1
-        if self.temp1 is None and self.temp2 is not None:
-            return self.temp2
-        else:
-            return None
+        return self.extract_from_temp_values(extractor=lambda temp1, temp2: max(temp1, temp2))
 
     def log_cell_data(self):
         if logger.getEffectiveLevel() > logging.INFO and len(self.cells) == 0:
