@@ -2,7 +2,6 @@
 max-line-length = 120
 exclude =
           ./etc/dbus-serialbattery/ant.py,
-          ./etc/dbus-serialbattery/battery.py,
           ./etc/dbus-serialbattery/battery_template.py,
           ./etc/dbus-serialbattery/daly.py,
           ./etc/dbus-serialbattery/dbus-serialbattery.py,
