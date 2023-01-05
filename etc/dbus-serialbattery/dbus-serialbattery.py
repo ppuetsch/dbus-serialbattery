@@ -18,6 +18,28 @@ else:
 from dbushelper import DbusHelper
 from utils import DRIVER_VERSION, DRIVER_SUBVERSION, logger, battery_types
 from battery import Battery
+from lltjbd import LltJbd
+from daly import Daly
+from ant import Ant
+from jkbms import Jkbms
+
+# from sinowealth import Sinowealth
+from renogy import Renogy
+from ecs import Ecs
+from lifepower import Lifepower
+
+battery_types = [
+    {"bms": LltJbd, "baud": 9600},
+    {"bms": Ant, "baud": 19200},
+    {"bms": Daly, "baud": 9600, "address": b"\x40"},
+    {"bms": Daly, "baud": 9600, "address": b"\x80"},
+    {"bms": Jkbms, "baud": 115200},
+    #    {"bms" : Sinowealth},
+    {"bms": Lifepower, "baud": 9600},
+    {"bms": Renogy, "baud": 9600, "address": b"\x30"},
+    {"bms": Renogy, "baud": 9600, "address": b"\xF7"},
+    {"bms": Ecs, "baud": 19200},
+]
 
 
 logger.info("Starting dbus-serialbattery")

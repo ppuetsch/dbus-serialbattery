@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from typing import Union
+from typing import Union, Tuple
 
 from utils import logger
 import utils
@@ -495,7 +495,13 @@ class Battery(ABC):
                 pass
         return max_voltage
 
-    def get_midvoltage(self) -> Union[float, None]:
+    def get_midvoltage(self) -> Tuple[Union[float, None], Union[float, None]]:
+        """
+        This method returns the Voltage "in the middle of the battery"
+        as well as a deviation of an ideally balanced battery. It does so by calculating the sum of the first half
+        of the cells and adding 1/2 of the "middle cell" voltage (if it exists)
+        :return: a tuple of the voltage in the middle, as well as a percentage deviation (total_voltage / 2)
+        """
         if (
             not utils.MIDPOINT_ENABLE
             or self.cell_count is None
@@ -506,30 +512,28 @@ class Battery(ABC):
             return None, None
 
         halfcount = int(math.floor(self.cell_count / 2))
+        uneven_cells_offset = self.cell_count % 2
         half1voltage = 0
         half2voltage = 0
 
         try:
             half1voltage = sum(
-                c.voltage for c in self.cells[:halfcount] if c.voltage is not None
+                cell.voltage
+                for cell in self.cells[:halfcount]
+                if cell.voltage is not None
             )
             half2voltage = sum(
-                c.voltage
-                for c in self.cells[halfcount : halfcount * 2]
-                if c.voltage is not None
+                cell.voltage
+                for cell in self.cells[halfcount + uneven_cells_offset :]
+                if cell.voltage is not None
             )
         except ValueError:
             pass
 
         try:
-            # handle uneven cells by giving half the voltage of the last cell to half1 and half2
-            extra = (
-                0
-                if (2 * halfcount == self.cell_count)
-                else self.cells[self.cell_count - 1].voltage / 2
-            )
+            extra = 0 if self.cell_count % 2 else self.cells[halfcount + 1].voltage / 2
             # get the midpoint of the battery
-            midpoint = (half1voltage + half2voltage) / 2 + extra
+            midpoint = half1voltage + extra
             return (
                 midpoint,
                 (half2voltage - half1voltage) / (half2voltage + half1voltage) * 100,
