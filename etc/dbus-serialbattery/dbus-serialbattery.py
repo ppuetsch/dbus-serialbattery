@@ -16,7 +16,7 @@ else:
 # from ve_utils import exit_on_error
 
 from dbushelper import DbusHelper
-from utils import DRIVER_VERSION, DRIVER_SUBVERSION, logger, battery_types
+from utils import DRIVER_VERSION, DRIVER_SUBVERSION, logger
 from battery import Battery
 from lltjbd import LltJbd
 from daly import Daly
