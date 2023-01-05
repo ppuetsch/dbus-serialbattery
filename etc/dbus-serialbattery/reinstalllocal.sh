@@ -1,5 +1,5 @@
 #!/bin/bash
-set +x
+set -x
 
 DRIVERNAME=dbus-serialbattery
 
