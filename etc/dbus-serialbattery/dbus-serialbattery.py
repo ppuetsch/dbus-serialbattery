@@ -61,13 +61,13 @@ def main():
         while count > 0:
             # create a new battery object that can read the battery and run connection test
             for test in battery_types:
-                logger.info("Testing " + test["bms"])
+                logger.info("Testing " + test["bms"].__name__)
                 batteryClass = test["bms"]
                 baud = test["baud"]
-                battery: Battery = batteryClass(_port, baud, test.get("address"))
+                battery: Battery = batteryClass(port=_port,baud=baud, address=test.get("address"))
                 if battery.test_connection():
                     logger.info(
-                        "Connection established to " + testbms.__class__.__name__
+                        "Connection established to " + battery.__class__.__name__
                     )
                     return battery
             count -= 1
@@ -75,7 +75,7 @@ def main():
 
         return None
 
-    def get_port() -> Str:
+    def get_port() -> str:
         # Get the port we need to use from the argument
         if len(sys.argv) > 1:
             return sys.argv[1]

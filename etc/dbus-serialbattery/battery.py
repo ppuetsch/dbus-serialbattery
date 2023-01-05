@@ -51,7 +51,7 @@ class Battery(ABC):
     use the individual implementations as type Battery and work with it.
     """
 
-    def __init__(self, port, baud):
+    def __init__(self, port, baud, address):
         self.port = port
         self.baud_rate = baud
         self.role = "battery"

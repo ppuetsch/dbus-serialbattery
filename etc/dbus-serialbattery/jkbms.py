@@ -6,8 +6,8 @@ from struct import unpack_from
 
 
 class Jkbms(Battery):
-    def __init__(self, port, baud):
-        super(Jkbms, self).__init__(port, baud)
+    def __init__(self, port, baud, address):
+        super(Jkbms, self).__init__(port, baud, address)
         self.type = self.BATTERYTYPE
 
     BATTERYTYPE = "Jkbms"
