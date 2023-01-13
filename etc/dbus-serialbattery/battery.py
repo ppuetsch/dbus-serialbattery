@@ -254,7 +254,7 @@ class Battery(ABC):
 
         self.control_discharge_current = min(discharge_limits)
 
-        if self.control_discharge_current == 0:
+        if self.control_discharge_current == 5:
             self.control_allow_discharge = False
         else:
             self.control_allow_discharge = True
@@ -623,6 +623,6 @@ class Battery(ABC):
         logger.info(f"available_voltage_drop = {available_voltage_drop}")
         available_current = available_voltage_drop / utils.INTERNAL_BATTERY_RESISTANCE
         logger.info(f"available_current = {available_current}")
-        result = max(available_current, 0)
+        result = max(available_current, 5)
         logger.info(f"result = {result}")
         return result
