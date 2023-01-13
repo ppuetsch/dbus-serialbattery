@@ -29,16 +29,7 @@ from ecs import Ecs
 from lifepower import Lifepower
 
 battery_types = [
-    {"bms": LltJbd, "baud": 9600},
-    {"bms": Ant, "baud": 19200},
-    {"bms": Daly, "baud": 9600, "address": b"\x40"},
-    {"bms": Daly, "baud": 9600, "address": b"\x80"},
     {"bms": Jkbms, "baud": 115200},
-    #    {"bms" : Sinowealth},
-    {"bms": Lifepower, "baud": 9600},
-    {"bms": Renogy, "baud": 9600, "address": b"\x30"},
-    {"bms": Renogy, "baud": 9600, "address": b"\xF7"},
-    {"bms": Ecs, "baud": 19200},
 ]
 
 

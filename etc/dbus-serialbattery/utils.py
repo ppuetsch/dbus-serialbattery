@@ -44,7 +44,7 @@ degree_sign = "\N{DEGREE SIGN}"
 # False is a Step mode. This is the default with limitations on hard boundary steps
 # True "Linear"    # New linear limitations by WaldemarFech for smoother values
 DYNAMIC_DISCHARGE_CURRENT_ENABLE = "True" == config["DEFAULT"]["DYNAMIC_DISCHARGE_CURRENT_ENABLE"]
-INTERNAL_BATTERY_RESISTANCE = float(config["DEFAULT"]["INTERNAL_BATTERY_RESISTANCE"])
+INTERNAL_BATTERY_RESISTANCE = float(config["DEFAULT"]["INTERNAL_BATTERY_RESISTANCE_MILIOHMS"])/1000.0
 LINEAR_LIMITATION_ENABLE = "True" == config["DEFAULT"]["LINEAR_LIMITATION_ENABLE"]
 
 # -------- Cell Voltage limitation ---------

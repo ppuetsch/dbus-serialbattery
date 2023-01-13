@@ -607,14 +607,17 @@ class Battery(ABC):
         )
 
         return
+
     def calcDynamicDischargeCurrent(self):
-        logger.info(f"calculating dynamic discharge limit min_cell_voltage = {self.get_min_cell_voltage()} current = {self.current} internal_resistance = {utils.INTERNAL_BATTERY_RESISTANCE}")
+        logger.info(f"calculating dynamic discharge limit min_cell_voltage = "
+                    f"{self.get_min_cell_voltage()} current = {self.current} "
+                    f"internal_resistance = {utils.INTERNAL_BATTERY_RESISTANCE}")
         estimated_zero_load_voltage = self.get_min_cell_voltage() - self.current * utils.INTERNAL_BATTERY_RESISTANCE
         logger.info(f" estimated_zero_load_voltage = {estimated_zero_load_voltage}")
         available_voltage_drop = estimated_zero_load_voltage - utils.MIN_CELL_VOLTAGE
         logger.info(f"available_voltage_drop = {available_voltage_drop}")
         available_current = available_voltage_drop / utils.INTERNAL_BATTERY_RESISTANCE
         logger.info(f"available_current = {available_current}")
-        result = max(available_current, 9999 if self.current > 0 else 0)
+        result = max(available_current, 0)
         logger.info(f"result = {result}")
         return result

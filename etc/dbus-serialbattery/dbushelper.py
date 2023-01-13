@@ -15,7 +15,6 @@ sys.path.insert(
 )
 from vedbus import VeDbusService
 from settingsdevice import SettingsDevice
-import battery
 from utils import *
 
 
@@ -365,7 +364,7 @@ class DbusHelper:
             1 if self.battery.charge_fet and self.battery.control_allow_charge else 0
         )
         self._dbusservice["/Io/AllowToDischarge"] = (
-            1 if self.battery.discharge_fet else 0
+            1 if self.battery.discharge_fet and self.battery.control_allow_discharge else 0
         )
         self._dbusservice["/System/NrOfModulesBlockingCharge"] = (
             0
