@@ -197,14 +197,14 @@ class Battery(ABC):
 
             if self.max_voltage_start_time is None:
                 if (
-                        utils.MAX_CELL_VOLTAGE * self.cell_count <= voltageSum
-                        and self.allow_max_voltage
+                    utils.MAX_CELL_VOLTAGE * self.cell_count <= voltageSum
+                    and self.allow_max_voltage
                 ):
                     self.max_voltage_start_time = time()
                 else:
                     if (
-                            utils.SOC_LEVEL_TO_RESET_VOLTAGE_LIMIT > self.soc
-                            and not self.allow_max_voltage
+                        utils.SOC_LEVEL_TO_RESET_VOLTAGE_LIMIT > self.soc
+                        and not self.allow_max_voltage
                     ):
                         self.allow_max_voltage = True
             else:
@@ -393,13 +393,17 @@ class Battery(ABC):
     def get_min_cell_index(self) -> int:
         if len(self.cells) == 0 and hasattr(self, "cell_min_no"):
             return self.cell_min_no
-        min_cell_id, _ = min(enumerate(self.cells), key=lambda enumerat_item: enumerat_item[1].voltage)
+        min_cell_id, _ = min(
+            enumerate(self.cells), key=lambda enumerat_item: enumerat_item[1].voltage
+        )
         return min_cell_id
 
     def get_max_cell_index(self) -> int:
         if len(self.cells) == 0 and hasattr(self, "cell_max_no"):
             return self.cell_max_no
-        max_cell_id, _ = min(enumerate(self.cells), key=lambda enumerat_item: enumerat_item[1].voltage)
+        max_cell_id, _ = min(
+            enumerate(self.cells), key=lambda enumerat_item: enumerat_item[1].voltage
+        )
         return max_cell_id
 
     def get_celldesc(self, cell_index: Union[int, None]) -> Union[str, None]:
@@ -488,11 +492,11 @@ class Battery(ABC):
         :return: a tuple of the voltage in the middle, as well as a percentage deviation (total_voltage / 2)
         """
         if (
-                not utils.MIDPOINT_ENABLE
-                or self.cell_count is None
-                or self.cell_count == 0
-                or self.cell_count < 4
-                or len(self.cells) != self.cell_count
+            not utils.MIDPOINT_ENABLE
+            or self.cell_count is None
+            or self.cell_count == 0
+            or self.cell_count < 4
+            or len(self.cells) != self.cell_count
         ):
             return None, None
 
@@ -509,7 +513,7 @@ class Battery(ABC):
             )
             half2voltage = sum(
                 cell.voltage
-                for cell in self.cells[halfcount + uneven_cells_offset:]
+                for cell in self.cells[halfcount + uneven_cells_offset :]
                 if cell.voltage is not None
             )
         except ValueError:
