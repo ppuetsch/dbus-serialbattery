@@ -338,7 +338,7 @@ class DbusHelper:
         # Update SOC, DC and System items
         self._dbusservice["/System/NrOfCellsPerBattery"] = self.battery.cell_count
         self._dbusservice["/Soc"] = (
-            max(round(self.battery.soc, 2), 6)
+            max(round(self.battery.soc, 2), 11)
             if self.battery.control_allow_discharge
             else min(round(self.battery.soc, 2), 4)
         )
