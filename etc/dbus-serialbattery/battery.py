@@ -393,13 +393,13 @@ class Battery(ABC):
     def get_min_cell_index(self) -> int:
         if len(self.cells) == 0 and hasattr(self, "cell_min_no"):
             return self.cell_min_no
-        min_cell_id, _ = min(enumerate(self.cells), key=lambda index, cell: cell.voltage)
+        min_cell_id, _ = min(enumerate(self.cells), key=lambda enumerat_item: enumerat_item[1].voltage)
         return min_cell_id
 
     def get_max_cell_index(self) -> int:
         if len(self.cells) == 0 and hasattr(self, "cell_max_no"):
             return self.cell_max_no
-        max_cell_id, _ = min(enumerate(self.cells), key=lambda index, cell: cell.voltage)
+        max_cell_id, _ = min(enumerate(self.cells), key=lambda enumerat_item: enumerat_item[1].voltage)
         return max_cell_id
 
     def get_celldesc(self, cell_index: Union[int, None]) -> Union[str, None]:
