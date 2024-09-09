@@ -5,6 +5,7 @@ import utils
 from struct import unpack_from
 from re import sub
 import sys
+import requests
 
 
 class Jkbms(Battery):
@@ -19,6 +20,37 @@ class Jkbms(Battery):
     LENGTH_SIZE = "H"
     CURRENT_ZERO_CONSTANT = 32768
     command_status = b"\x4E\x57\x00\x13\x00\x00\x00\x00\x06\x03\x00\x00\x00\x00\x00\x00\x68\x00\x00\x01\x29"
+    homeassistant_token: str = utils.HOMEASSISTANT_TOKEN
+    homeassistantBaseUrl: str = utils.HOMEASSISTANT_BASE_URL
+    is_pv_battery_charge_enabled_entity_id=utils.IS_PV_BATTERY_CHARGE_ENABLED_ENTITY_ID
+    is_pv_battery_discharge_enabled_entity_id=utils.IS_PV_BATTERY_DISCHARGE_ENABLED_ENTITY_ID
+    is_pv_battery_charge_enabled=True
+    is_pv_battery_discharge_enabled=True
+
+    def get_default_homeassistant_headers(self)->dict:
+        headers = {
+            "content-type": "application/json",
+            "Authorization": f"Bearer {self.homeassistant_token}"
+        }
+        return headers
+
+    def get_homeassistant_state(self, entity_id):
+        url = self.homeassistantBaseUrl + f"/states/{entity_id}"
+        response = requests.get(url, headers = self.get_default_homeassistant_headers())
+        return response.json()["state"]
+
+    def update_is_pv_battery_charge_enabled(self):
+        try:
+            self.is_pv_battery_charge_enabled = self.get_homeassistant_state(self.is_pv_battery_charge_enabled_entity_id) == "on"
+        except Exception as err:
+            logger.error(f"Unexpected error in is_pv_battery_charge_enabled {err=}, {type(err)=}")
+
+
+    def update_is_pv_battery_discharge_enabled(self):
+        try:
+            self.is_pv_battery_discharge_enabled = self.get_homeassistant_state(self.is_pv_battery_discharge_enabled_entity_id) == "on"
+        except Exception as err:
+            logger.error(f"Unexpected error in is_pv_battery_discharge_enabled {err=}, {type(err)=}")
 
     def test_connection(self):
         # call a function that will connect to the battery, send a command and retrieve the result.
@@ -26,7 +58,7 @@ class Jkbms(Battery):
         # Return True if success, False for failure
         try:
             return self.read_status_data()
-        except Exception:
+        except Exception as e:
             (
                 exception_type,
                 exception_object,
@@ -35,7 +67,7 @@ class Jkbms(Battery):
             file = exception_traceback.tb_frame.f_code.co_filename
             line = exception_traceback.tb_lineno
             logger.error(
-                f"Exception occurred: {repr(exception_object)} of type {exception_type} in {file} line #{line}"
+                f"Exception occurred: {repr(exception_object)} of type {exception_type} in {file} line #{line}",e
             )
             return False
 
@@ -75,6 +107,8 @@ class Jkbms(Battery):
         return bytes[start + 1 : start + length + 1]
 
     def read_status_data(self):
+        self.update_is_pv_battery_charge_enabled()
+        self.update_is_pv_battery_discharge_enabled()
         status_data = self.read_serial_data_jkbms(self.command_status)
         # check if connection success
         if status_data is False:
@@ -129,13 +163,14 @@ class Jkbms(Battery):
         offset = cellbyte_count + 66
         self.max_battery_discharge_current = float(
             unpack_from(">H", self.get_data(status_data, b"\x97", offset, 2))[0]
-        )
+        ) if self.is_pv_battery_discharge_enabled else 0
+
 
         # Continued charge current
         offset = cellbyte_count + 72
         self.max_battery_charge_current = float(
             unpack_from(">H", self.get_data(status_data, b"\x99", offset, 2))[0]
-        )
+        ) if self.is_pv_battery_charge_enabled else 0
 
         # the JKBMS resets to
         # 95% SoC, if all cell voltages are above or equal to OVPR (Over Voltage Protection Recovery)
@@ -211,8 +246,16 @@ class Jkbms(Battery):
                 .strip()
             ),
         )
+        if ("2024" in self.production and 310 == self.capacity):
+            self.unique_identifier_value = "Neu MB310"
+        elif ("2024" in self.production and 304 == self.capacity):
+            self.unique_identifier_value = "Neu LF304"
+        elif ("2022" in self.production and 304 == self.capacity):
+            self.unique_identifier_value = "Alt LF304"
+        else:
+            raise BatteryNotKnownError(f"Battery could not be determined Production: {self.production}, Capacity: {self.capacity}")
 
-        # show wich cells are balancing
+        # show which cells are balancing
         if self.get_min_cell() is not None and self.get_max_cell() is not None:
             for c in range(self.cell_count):
                 if self.balancing and (
@@ -229,7 +272,7 @@ class Jkbms(Battery):
         """
         Used to identify a BMS when multiple BMS are connected
         """
-        return self.unique_identifier_tmp
+        return self.unique_identifier_value
 
     def to_fet_bits(self, byte_data):
         tmp = bin(byte_data)[2:].rjust(3, utils.zero_char)
