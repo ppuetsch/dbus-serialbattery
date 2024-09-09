@@ -165,3 +165,5 @@ etc/dbus-serialbattery/config.ini
 
 # Local Clone of velib_python
 velib_python
+local
+.idea
