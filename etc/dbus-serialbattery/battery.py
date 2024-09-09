@@ -165,10 +165,10 @@ class Battery(ABC):
         return "Serial " + self.port
 
     def custom_name(self) -> str:
-        return "SerialBattery(" + self.type + ")"
+        return "JKBMS(" + self.unique_identifier() + ")"
 
     def product_name(self) -> str:
-        return "SerialBattery(" + self.type + ")"
+        return "JKBMS(" + self.unique_identifier() + ")"
 
     @abstractmethod
     def get_settings(self) -> bool:
