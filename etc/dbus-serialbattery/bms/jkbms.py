@@ -43,14 +43,14 @@ class Jkbms(Battery):
         try:
             self.is_pv_battery_charge_enabled = self.get_homeassistant_state(self.is_pv_battery_charge_enabled_entity_id) == "on"
         except Exception as err:
-            logger.error(f"Unexpected error in is_pv_battery_charge_enabled {err=}, {type(err)=}")
+            logger.error(f"Unexpected error in is_pv_battery_charge_enabled",err)
 
 
     def update_is_pv_battery_discharge_enabled(self):
         try:
             self.is_pv_battery_discharge_enabled = self.get_homeassistant_state(self.is_pv_battery_discharge_enabled_entity_id) == "on"
         except Exception as err:
-            logger.error(f"Unexpected error in is_pv_battery_discharge_enabled {err=}, {type(err)=}")
+            logger.error(f"Unexpected error in is_pv_battery_discharge_enabled",err)
 
     def test_connection(self):
         # call a function that will connect to the battery, send a command and retrieve the result.
