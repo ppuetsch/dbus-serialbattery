@@ -5,6 +5,7 @@
 
 from battery import Battery, Cell
 from utils import bytearray_to_string, is_bit_set, read_serial_data, logger, ZERO_CHAR
+import utils
 from struct import unpack_from
 from re import sub
 import sys
@@ -194,7 +195,7 @@ class Jkbms(Battery):
         offset = cellbyte_count + 72
         max_battery_charge_current = float(unpack_from(">H", self.get_data(status_data, b"\x99", offset, 2))[0])
         # check if the max charge current is valid
-        if self.is_pv_battery_charge_enabled
+        if self.is_pv_battery_charge_enabled:
             if max_battery_charge_current >= 0:
                 self.max_battery_charge_current = max_battery_charge_current
         else:

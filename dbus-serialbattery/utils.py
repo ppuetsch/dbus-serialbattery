@@ -440,6 +440,10 @@ LIPRO_START_ADDRESS: int = get_int_from_config("DEFAULT", "LIPRO_START_ADDRESS")
 LIPRO_END_ADDRESS: int = get_int_from_config("DEFAULT", "LIPRO_END_ADDRESS")
 LIPRO_CELL_COUNT: int = get_int_from_config("DEFAULT", "LIPRO_CELL_COUNT")
 
+HOMEASSISTANT_BASE_URL =config["DEFAULT"]["HOMEASSISTANT_BASE_URL"]
+HOMEASSISTANT_TOKEN = config["DEFAULT"]["HOMEASSISTANT_TOKEN"]
+IS_PV_BATTERY_CHARGE_ENABLED_ENTITY_ID=config["DEFAULT"]["IS_PV_BATTERY_CHARGE_ENABLED_ENTITY_ID"]
+IS_PV_BATTERY_DISCHARGE_ENABLED_ENTITY_ID=config["DEFAULT"]["IS_PV_BATTERY_DISCHARGE_ENABLED_ENTITY_ID"]
 
 # FUNCTIONS
 def constrain(val: float, min_val: float, max_val: float) -> float:
@@ -743,3 +747,4 @@ def publish_config_variables(dbusservice) -> None:
 # only if PUBLISH_CONFIG_VALUES is set to True
 if PUBLISH_CONFIG_VALUES:
     locals_copy = locals().copy()
+
