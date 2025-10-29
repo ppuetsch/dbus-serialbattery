@@ -6,7 +6,7 @@
 
 from __future__ import absolute_import, division, print_function, unicode_literals
 from battery import Battery, Cell
-from utils import read_serial_data, logger, bytearray_to_string
+from utils import read_serial_data, get_connection_error_message, logger, bytearray_to_string
 from struct import unpack_from
 import re
 import sys
@@ -17,9 +17,9 @@ class EG4_Lifepower(Battery):
         super(EG4_Lifepower, self).__init__(port, baud, address)
         self.type = self.BATTERYTYPE
         self.address = address
-        self.command_general = b"\x7E" + address + b"\x01\x00" + self.get_command_general_part() + b"\x0D"
-        self.command_hardware_version = b"\x7E" + address + b"\x42\x00\xFC\x0D"
-        self.command_firmware_version = b"\x7E" + address + b"\x33\x00" + self.get_command_general_part() + b"\x0D"
+        self.command_general = b"\x7e" + address + b"\x01\x00" + self.get_command_general_part() + b"\x0d"
+        self.command_hardware_version = b"\x7e" + address + b"\x42\x00\xfc\x0d"
+        self.command_firmware_version = b"\x7e" + address + b"\x33\x00" + self.get_command_general_part() + b"\x0d"
         self.history.exclude_values_to_calculate = ["charge_cycles"]
 
         # polling every second seems to create some error messages
@@ -62,33 +62,33 @@ class EG4_Lifepower(Battery):
         """
         Get the second last byte of the command_general command
 
-        0x00:\x7E\x01\x01\x00\x00\x0D
-        0x01:\x7E\x01\x01\x00\xFE\x0D
-        0x02:\x7E\x02\x01\x00\xFC\x0D
-        0x03:\x7E\x03\x01\x00\xFE\x0D
-        0x04:\x7E\x04\x01\x00\xF8\x0D
-        0x05:\x7E\x05\x01\x00\xFE\x0D
-        0x06:\x7E\x06\x01\x00\xFC\x0D
-        0x07:\x7E\x07\x01\x00\xFE\x0D
-        0x08:\x7E\x08\x01\x00\xF0\x0D
-        0x09:\x7E\x09\x01\x00\xFE\x0D
-        0x0A:\x7E\x0A\x01\x00\xFC\x0D
-        0x0B:\x7E\x0B\x01\x00\xFE\x0D
-        0x0C:\x7E\x0C\x01\x00\xF8\x0D
-        0x0D:\x7E\x0D\x01\x00\xFE\x0D
-        0x0E:\x7E\x0E\x01\x00\xFC\x0D
-        0x0F:\x7E\x0D\x01\x00\xFE\x0D
+        0x00:\x7e\x01\x01\x00\x00\x0d
+        0x01:\x7e\x01\x01\x00\xfe\x0d
+        0x02:\x7e\x02\x01\x00\xfc\x0d
+        0x03:\x7e\x03\x01\x00\xfe\x0d
+        0x04:\x7e\x04\x01\x00\xf8\x0d
+        0x05:\x7e\x05\x01\x00\xfe\x0d
+        0x06:\x7e\x06\x01\x00\xfc\x0d
+        0x07:\x7e\x07\x01\x00\xfe\x0d
+        0x08:\x7e\x08\x01\x00\xf0\x0d
+        0x09:\x7e\x09\x01\x00\xfe\x0d
+        0x0A:\x7e\x0a\x01\x00\xfc\x0d
+        0x0B:\x7e\x0b\x01\x00\xfe\x0d
+        0x0C:\x7e\x0c\x01\x00\xf8\x0d
+        0x0D:\x7e\x0d\x01\x00\xfe\x0d
+        0x0E:\x7e\x0e\x01\x00\xfc\x0d
+        0x0F:\x7e\x0d\x01\x00\xfe\x0d
         """
         if self.address == b"\x00":
             return b"\x00"
-        elif self.address == b"\x02" or self.address == b"\x06" or self.address == b"\x0A" or self.address == b"\x0E":
-            return b"\xFC"
-        elif self.address == b"\x04" or self.address == b"\x0C":
-            return b"\xF8"
+        elif self.address == b"\x02" or self.address == b"\x06" or self.address == b"\x0a" or self.address == b"\x0e":
+            return b"\xfc"
+        elif self.address == b"\x04" or self.address == b"\x0c":
+            return b"\xf8"
         elif self.address == b"\x08":
-            return b"\xF0"
+            return b"\xf0"
         else:
-            return b"\xFE"
+            return b"\xfe"
 
     def get_settings(self):
         # After successful connection get_settings() will be called to set up the battery
@@ -160,10 +160,16 @@ class EG4_Lifepower(Battery):
 
         self.cells = [Cell(True) for _ in range(0, self.cell_count)]
         for i, cell in enumerate(self.cells):
-            # there is a situation where the MSB bit of the high byte may come set
-            # I got that when I got a high voltage alarm from the unit.
-            # make sure that bit is 0, by doing an AND with 32767 (01111111 1111111)
-            cell.voltage = (groups[0][i] & 32767) / 1000
+            # There is a situation where the two highest bits of the high byte
+            # may come set, possibly relating to a high voltage alarm.
+            # See the EG4 protocol:
+            # https://github.com/slim-bean/powermon?tab=readme-ov-file#group-1
+            # Related issue:
+            # https://github.com/mr-manuel/venus-os_dbus-serialbattery/issues/155
+
+            # Mask out the high bits
+            # 0x3FFF = 16383 = 0b0011_1111_1111_1111
+            cell.voltage = (groups[0][i] & 0x3FFF) / 1000
 
         # Current
         self.current = (30000 - groups[1][0]) / 100
@@ -215,6 +221,7 @@ class EG4_Lifepower(Battery):
             self.LENGTH_POS,
             self.LENGTH_CHECK,
             self.LENGTH_FIXED,
+            battery_online=self.online,
         )
         if data is False:
             logger.debug(">>> ERROR: Incorrect Data")
@@ -224,5 +231,5 @@ class EG4_Lifepower(Battery):
         if data[-1] == 13:
             return data
         else:
-            logger.error(">>> ERROR: Incorrect Reply")
+            get_connection_error_message(self.online)
             return False

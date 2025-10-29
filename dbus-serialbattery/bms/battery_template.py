@@ -170,6 +170,9 @@ class BatteryTemplate(Battery):
         # state of charge in percent (float)
         self.soc = VALUE_FROM_BMS
 
+        # state of health in percent (float)
+        self.soh = VALUE_FROM_BMS
+
         # temperature sensor 1 in °C (float)
         temperature_1 = VALUE_FROM_BMS
         self.to_temperature(1, temperature_1)
@@ -185,7 +188,7 @@ class BatteryTemplate(Battery):
         """
         # remaining capacity of the battery in ampere hours (float)
         # if not available, then it's calculated from the SOC and the capacity
-        self.capacity_remaining = VALUE_FROM_BMS
+        self.capacity_remain = VALUE_FROM_BMS
 
         # temperature sensor 2 in °C (float)
         temperature_2 = VALUE_FROM_BMS
@@ -349,9 +352,15 @@ class BatteryTemplate(Battery):
 
     def read_serial_data_template(self, command):
         # use the read_serial_data() function to read the data and then do BMS spesific checks (crc, start bytes, etc)
-        data = read_serial_data(command, self.port, self.baud_rate, self.LENGTH_POS, self.LENGTH_CHECK)
+        data = read_serial_data(
+            command,
+            self.port,
+            self.baud_rate,
+            self.LENGTH_POS,
+            self.LENGTH_CHECK,
+            battery_online=self.online,
+        )
         if data is False:
-            logger.error(">>> ERROR: No reply - returning")
             return False
 
         start, flag, command_ret, length = unpack_from("BBBB", data)

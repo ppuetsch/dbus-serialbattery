@@ -1,4 +1,4 @@
-import QtQuick 1.1
+import QtQuick 2
 import com.victron.velib 1.0
 
 MbPage {
@@ -40,6 +40,13 @@ MbPage {
     }
 
     model: VisibleItemModel {
+		MbItemText {
+			text: qsTr("<b>Note:</b> dbus-serialbattery features are not developed for GUIv1 anymore. " +
+				"Switch to GUIv2 for a better experience and new features.")
+			wrapMode: Text.WordWrap
+			show: productId.value === 0xBA77
+		}
+
         MbItemOptions {
             description: qsTr("Switch")
             bind: service.path("/Mode")

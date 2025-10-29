@@ -4,7 +4,7 @@
 # Added by https://github.com/KoljaWindeler
 
 from battery import Battery, Cell
-from utils import bytearray_to_string, read_serial_data, logger, USE_PORT_AS_UNIQUE_ID
+from utils import bytearray_to_string, read_serial_data, get_connection_error_message, logger, USE_PORT_AS_UNIQUE_ID
 from struct import unpack_from
 import sys
 
@@ -17,8 +17,8 @@ class Jkbms_pb(Battery):
         self.cell_count = 0
         self.address = address
         self.command_status = b"\x10\x16\x20\x00\x01\x02\x00\x00"
-        self.command_settings = b"\x10\x16\x1E\x00\x01\x02\x00\x00"
-        self.command_about = b"\x10\x16\x1C\x00\x01\x02\x00\x00"
+        self.command_settings = b"\x10\x16\x1e\x00\x01\x02\x00\x00"
+        self.command_about = b"\x10\x16\x1c\x00\x01\x02\x00\x00"
         self.history.exclude_values_to_calculate = ["charge_cycles"]
 
     BATTERYTYPE = "JKBMS PB Model"
@@ -57,7 +57,7 @@ class Jkbms_pb(Battery):
         # Set the current limits, populate cell count, etc
         # Return True if success, False for failure
         status_data = self.read_serial_data_jkbms_pb(self.command_settings, 300)
-        if status_data is False:
+        if not status_data:
             return False
 
         VolSmartSleep = unpack_from("<i", status_data, 6)[0] / 1000
@@ -68,6 +68,8 @@ class Jkbms_pb(Battery):
         VolBalanTrig = unpack_from("<i", status_data, 26)[0] / 1000
         VolSOC_full = unpack_from("<i", status_data, 30)[0] / 1000
         VolSOC_empty = unpack_from("<i", status_data, 34)[0] / 1000
+        VolRCV = unpack_from("<i", status_data, 38)[0] / 1000  # Voltage Cell Request Charge Voltage (RCV)
+        VolRFV = unpack_from("<i", status_data, 42)[0] / 1000  # Voltage Cell Request Float Voltage (RFV)
         VolSysPwrOff = unpack_from("<i", status_data, 46)[0] / 1000
         CurBatCOC = unpack_from("<i", status_data, 50)[0] / 1000
         TIMBatCOCPDly = unpack_from("<i", status_data, 54)[0]
@@ -78,7 +80,7 @@ class Jkbms_pb(Battery):
         TIMBatSCPRDly = unpack_from("<i", status_data, 74)[0]
         CurBalanMax = unpack_from("<i", status_data, 78)[0] / 1000
         TMPBatCOT = unpack_from("<I", status_data, 82)[0] / 10
-        TMPBatCOTPR = unpack_from("<I", status_data, 96)[0] / 10
+        TMPBatCOTPR = unpack_from("<I", status_data, 86)[0] / 10
         TMPBatDcOT = unpack_from("<I", status_data, 90)[0] / 10
         TMPBatDcOTPR = unpack_from("<I", status_data, 94)[0] / 10
         TMPBatCUT = unpack_from("<I", status_data, 98)[0] / 10
@@ -91,6 +93,10 @@ class Jkbms_pb(Battery):
         BalanEN = unpack_from("<i", status_data, 126)[0]
         CapBatCell = unpack_from("<i", status_data, 130)[0] / 1000
         SCPDelay = unpack_from("<i", status_data, 134)[0]
+        StartBalVol = unpack_from("<i", status_data, 138)[0] / 1000  # Start Balance Voltage
+
+        # balancer enabled
+        self.balance_fet = True if BalanEN != 0 else False
 
         # count of all cells in pack
         self.cell_count = CellCount
@@ -110,9 +116,10 @@ class Jkbms_pb(Battery):
         logger.debug("VolCellOV: " + str(VolCellOV))
         logger.debug("VolCellOVPR: " + str(VolCellOVPR))
         logger.debug("VolBalanTrig: " + str(VolBalanTrig))
-        logger.debug("VolBalanTrig: " + str(VolBalanTrig))
         logger.debug("VolSOC_full: " + str(VolSOC_full))
         logger.debug("VolSOC_empty: " + str(VolSOC_empty))
+        logger.debug("VolRCV: " + str(VolRCV))
+        logger.debug("VolRFV: " + str(VolRFV))
         logger.debug("VolSysPwrOff: " + str(VolSysPwrOff))
         logger.debug("CurBatCOC: " + str(CurBatCOC))
         logger.debug("TIMBatCOCPDly: " + str(TIMBatCOCPDly))
@@ -136,9 +143,10 @@ class Jkbms_pb(Battery):
         logger.debug("BalanEN: " + str(BalanEN))
         logger.debug("CapBatCell: " + str(CapBatCell))
         logger.debug("SCPDelay: " + str(SCPDelay))
+        logger.debug("StartBalVol: " + str(StartBalVol))
 
         status_data = self.read_serial_data_jkbms_pb(self.command_about, 300)
-        serial_nr = status_data[86:96].decode("utf-8")
+        serial_nr = status_data[86:101].decode("utf-8")
         vendor_id = status_data[6:18].decode("utf-8")
         hw_version = (status_data[22:26].decode("utf-8") + " / " + status_data[30:35].decode("utf-8")).replace("\x00", "")
         sw_version = status_data[30:34].decode("utf-8")  # will be overridden
@@ -167,7 +175,7 @@ class Jkbms_pb(Battery):
     def read_status_data(self):
         status_data = self.read_serial_data_jkbms_pb(self.command_status, 299)
         # check if connection success
-        if status_data is False:
+        if not status_data:
             return False
 
         #        logger.error("sucess we have data")
@@ -346,8 +354,9 @@ class Jkbms_pb(Battery):
             self.LENGTH_CHECK,  # ignored
             length,
             self.LENGTH_SIZE,  # ignored
+            battery_online=self.online,
         )
-        if data is False:
+        if not data:
             return False
 
         # be = ''.join(format(x, ' 02X') for x in data)
@@ -359,7 +368,7 @@ class Jkbms_pb(Battery):
         if data[0] == 0x55 and data[1] == 0xAA:
             return data
         else:
-            logger.error(">>> ERROR: Incorrect Reply ")
+            get_connection_error_message(self.online)
             return False
 
     def modbusCrc(self, msg: str):

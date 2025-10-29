@@ -11,7 +11,7 @@ from typing import Union
 import ext.minimalmodbus as minimalmodbus
 import serial
 from battery import Battery, Cell, Protection
-from utils import logger, USE_BMS_DVCC_VALUES
+from utils import get_connection_error_message, logger, USE_BMS_DVCC_VALUES
 
 RETRYCNT = 3
 
@@ -78,7 +78,7 @@ class Seplosv3(Battery):
         for self.slaveaddress in self.slaveaddresses:
             mbdev = self.get_modbus(self.slaveaddress)
             if len(self.slaveaddresses) > 1:
-                logger.info(f"|- on slave address {self.slaveaddress}")
+                logger.info(f"  |- on slave address {self.slaveaddress}")
 
             for n in range(1, RETRYCNT):
                 try:
@@ -122,7 +122,7 @@ class Seplosv3(Battery):
 
         # give the user a feedback that no BMS was found
         if not found:
-            logger.error(">>> No reply - returning")
+            get_connection_error_message(self.online)
         else:
             result = self.get_settings()
             result = result and self.refresh_data()
@@ -163,7 +163,7 @@ class Seplosv3(Battery):
             logger.info(f"Error getting data {e}")
         return spa, pia, pib, sca, pic, sfa
 
-    def update_cells(self, pib) -> bool:
+    def update_cells(self, pib, pic) -> bool:
         try:
             self.cells = []
             for i in range(0, self.cell_count):
@@ -171,6 +171,11 @@ class Seplosv3(Battery):
                 cell.voltage = pib[i] / 1000.0
                 cell.temperature = pib[0x10 + math.floor(i / 4)] / 10 - 273.0
                 self.cells.append(cell)
+                if pic is not None:
+                    if i < 8:
+                        cell.balance = bool(pic[0x28] & (1 << i))
+                    else:
+                        cell.balance = bool(pic[0x30] & (1 << (i - 8)))
             self.temperature_1 = pib[0x10] / 10 - 273.0
             self.temperature_2 = pib[0x11] / 10 - 273.0
             self.temperature_3 = pib[0x12] / 10 - 273.0
@@ -243,8 +248,7 @@ class Seplosv3(Battery):
         try:
             self.discharge_fet = True if pic[0x78] == 1 else False
             self.charge_fet = True if pic[0x79] == 1 else False
-            self.balance_fet = True if pic[0x80] == 1 else False
-            self.protection.cell_imbalance = 2 if pic[0x74] == 0 else 0
+            self.balancing = True if pic[0x80] == 1 else False
         except Exception as e:
             logger.info(f"Error updating fets {e}")
             return False
@@ -269,7 +273,7 @@ class Seplosv3(Battery):
         if pib is None:
             results.append(False)
         else:
-            results.append(self.update_cells(pib))
+            results.append(self.update_cells(pib, pic))
 
         if sca is None or pic is None:
             results.append(False)

@@ -1253,7 +1253,7 @@ static PyObject *WraptObjectProxy_reduce(
         WraptObjectProxyObject *self, PyObject *args, PyObject *kwds)
 {
     PyErr_SetString(PyExc_NotImplementedError,
-                    "object proxy must define __reduce_ex__()");
+                    "object proxy must define __reduce__()");
 
     return NULL;
 }
@@ -3381,6 +3381,7 @@ moduleinit(void)
     Py_INCREF(&WraptCallableObjectProxy_Type);
     PyModule_AddObject(module, "CallableObjectProxy",
             (PyObject *)&WraptCallableObjectProxy_Type);
+    Py_INCREF(&WraptPartialCallableObjectProxy_Type);
     PyModule_AddObject(module, "PartialCallableObjectProxy",
             (PyObject *)&WraptPartialCallableObjectProxy_Type);
     Py_INCREF(&WraptFunctionWrapper_Type);

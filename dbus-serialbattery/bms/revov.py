@@ -43,10 +43,10 @@ class Revov(Battery):
 
     # setup the variables being looked for
 
-    command_get_version = b"\x7C\x01\x42\x00\x80\x0D"  # Get version number
-    command_get_model = b"\x7C\x01\x33\x00\xFE\x0D"  # Get model number
-    command_one = b"\x7C\x01\x06\x00\xF8\x0D"  # returns 4 bytes
-    command_two = b"\x7C\x01\x01\x00\x02\x0D"  # returns a ton of data
+    command_get_version = b"\x7c\x01\x42\x00\x80\x0d"  # Get version number
+    command_get_model = b"\x7c\x01\x33\x00\xfe\x0d"  # Get model number
+    command_one = b"\x7c\x01\x06\x00\xf8\x0d"  # returns 4 bytes
+    command_two = b"\x7c\x01\x01\x00\x02\x0d"  # returns a ton of data
 
     def test_connection(self):
         """
@@ -209,10 +209,17 @@ class Revov(Battery):
 
     def read_serial_data_revov(self, command):
         # use the read_serial_data() function to read the data and then do BMS spesific checks (crc, start bytes, etc)
-        data = read_serial_data(command, self.port, self.baud_rate, self.LENGTH_POS, self.LENGTH_CHECK)
+        data = read_serial_data(
+            command,
+            self.port,
+            self.baud_rate,
+            self.LENGTH_POS,
+            self.LENGTH_CHECK,
+            battery_online=self.online,
+        )
 
         if data is False:
-            logger.debug("read_serial_data_revov::Serial Data is Bad")
+            get_connection_error_message(self.online)
             return False
 
         # Its not quite modbus, but psuedo modbus'ish'

@@ -16,7 +16,7 @@ class ANT(Battery):
         self.type = self.BATTERYTYPE
         self.history.exclude_values_to_calculate = ["charge_cycles", "total_ah_drawn"]
 
-    command_general = b"\xDB\xDB\x00\x00\x00\x00"
+    command_general = b"\xdb\xdb\x00\x00\x00\x00"
     # command_capacity_low = b"\x5A\x5A\x1F\x00\x00\x1F"
     # command_capacity_high = b"\x5A\x5A\x20\x00\x00\x20"
     balancing = 0
@@ -125,6 +125,7 @@ class ANT(Battery):
             self.LENGTH_POS,
             self.LENGTH_CHECK,
             self.LENGTH_FIXED,
+            battery_online=self.online,
         )
         if data is False:
             logger.error(">>> ERROR: Incorrect Data")

@@ -14,7 +14,7 @@ import serial
 
 
 # CONSTANTS
-DRIVER_VERSION: str = "2.0.20241223dev"
+DRIVER_VERSION: str = "2.1.20251015dev"
 """
 current version of the driver
 """
@@ -41,7 +41,22 @@ config = configparser.ConfigParser()
 path = Path(__file__).parents[0]
 default_config_file_path = str(path.joinpath(PATH_CONFIG_DEFAULT).absolute())
 custom_config_file_path = str(path.joinpath(PATH_CONFIG_USER).absolute())
-config.read([default_config_file_path, custom_config_file_path])
+try:
+    config.read([default_config_file_path, custom_config_file_path])
+
+    # Ensure the [DEFAULT] section exists and is uppercase
+    if "DEFAULT" not in config:
+        logger.error(f'The custom config file "{custom_config_file_path}" is missing the [DEFAULT] section.')
+        logger.error("Make sure the first line of the file is exactly (case-sensitive): [DEFAULT]")
+        sleep(60)
+        sys.exit(1)
+
+except configparser.MissingSectionHeaderError as error_message:
+    logger.error(f'Error reading "{custom_config_file_path}"')
+    logger.error("Make sure the first line is exactly: [DEFAULT]")
+    logger.error(f"{error_message}\n")
+    sleep(60)
+    sys.exit(1)
 
 # Map config logging levels to logging module levels
 LOGGING_LEVELS = {
@@ -58,6 +73,31 @@ logger.setLevel(LOGGING_LEVELS.get(config["DEFAULT"].get("LOGGING").upper()))
 # This is needed else the errors are not instantly visible
 errors_in_config = []
 
+# Check if there are any options in the custom config file that are not in the default config file
+default_config = configparser.ConfigParser()
+custom_config = configparser.ConfigParser()
+# Ensure that option names are treated as case-sensitive
+default_config.optionxform = str
+custom_config.optionxform = str
+# Read the default and custom config files
+default_config.read(default_config_file_path)
+custom_config.read(custom_config_file_path)
+
+for section in custom_config.sections() + ["DEFAULT"]:
+    if section not in default_config.sections() + ["DEFAULT"]:
+        errors_in_config.append(f'Section "{section}" in config.ini is not valid.')
+    else:
+        for option in custom_config[section]:
+            if option not in default_config[section]:
+                errors_in_config.append(f'Option "{option}" in config.ini is not valid.')
+
+# Free up memory
+del default_config, custom_config, section
+
+# Check if option variable was set and if yes, free it
+if "option" in locals():
+    del option
+
 
 # --------- Helper Functions ---------
 def get_bool_from_config(group: str, option: str) -> bool:
@@ -71,7 +111,7 @@ def get_bool_from_config(group: str, option: str) -> bool:
     return config[group].get(option, "False").lower() == "true"
 
 
-def get_float_from_config(group: str, option: str) -> float:
+def get_float_from_config(group: str, option: str, default_value: float = 0) -> float:
     """
     Get a float value from the config file.
 
@@ -79,10 +119,17 @@ def get_float_from_config(group: str, option: str) -> float:
     :param option: Option in the config file
     :return: Float value
     """
-    return float(config[group][option])
+    value = config[group].get(option, default_value)
+    if value == "":
+        return default_value
+    try:
+        return float(value)
+    except ValueError:
+        errors_in_config.append(f"Invalid value '{value}' for option '{option}' in group '{group}'.")
+        return default_value
 
 
-def get_int_from_config(group: str, option: str) -> int:
+def get_int_from_config(group: str, option: str, default_value: int = 0) -> int:
     """
     Get an integer value from the config file.
 
@@ -90,7 +137,14 @@ def get_int_from_config(group: str, option: str) -> int:
     :param option: Option in the config file
     :return: Integer value
     """
-    return int(config[group][option])
+    value = config[group].get(option, default_value)
+    if value == "":
+        return default_value
+    try:
+        return int(value)
+    except ValueError:
+        errors_in_config.append(f"Invalid value '{value}' for option '{option}' in group '{group}'.")
+        return default_value
 
 
 def get_list_from_config(group: str, option: str, mapper: Callable[[Any], Any] = lambda v: v) -> List[Any]:
@@ -103,11 +157,14 @@ def get_list_from_config(group: str, option: str, mapper: Callable[[Any], Any] =
     :return: List of values
     """
     try:
-        raw_list = config[group][option].split(",")
+        raw_list = config[group].get(option).split(",")
         return [mapper(item.strip()) for item in raw_list if item.strip()]
     except KeyError:
         logger.error(f"Missing config option '{option}' in group '{group}'")
         errors_in_config.append(f"Missing config option '{option}' in group '{group}'")
+        return []
+    except ValueError:
+        errors_in_config.append(f"Invalid value '{mapper}' for option '{option}' in group '{group}'.")
         return []
 
 
@@ -119,7 +176,7 @@ def check_config_issue(condition: bool, message: str):
     :param message: The message to append if the condition is True
     """
     if condition:
-        errors_in_config.append(f"**CONFIG ISSUE**: {message}")
+        errors_in_config.append(f"{message}")
 
 
 # SAVE CONFIG VALUES to constants
@@ -171,17 +228,17 @@ elif FLOAT_CELL_VOLTAGE < MIN_CELL_VOLTAGE:
 
 
 # --------- SoC Reset Voltage (must match BMS settings) ---------
-SOC_RESET_VOLTAGE: float = get_float_from_config("DEFAULT", "SOC_RESET_VOLTAGE")
+SOC_RESET_CELL_VOLTAGE: float = get_float_from_config("DEFAULT", "SOC_RESET_CELL_VOLTAGE")
 SOC_RESET_AFTER_DAYS: Union[int, bool] = get_int_from_config("DEFAULT", "SOC_RESET_AFTER_DAYS") if config["DEFAULT"]["SOC_RESET_AFTER_DAYS"] != "" else False
 
 # make some checks for most common misconfigurations
-if SOC_RESET_AFTER_DAYS and SOC_RESET_VOLTAGE < MAX_CELL_VOLTAGE:
+if SOC_RESET_AFTER_DAYS and SOC_RESET_CELL_VOLTAGE < MAX_CELL_VOLTAGE:
     check_config_issue(
         True,
-        f"SOC_RESET_VOLTAGE ({SOC_RESET_VOLTAGE} V) is less than MAX_CELL_VOLTAGE ({MAX_CELL_VOLTAGE} V). "
-        "To ensure that the driver still works correctly, SOC_RESET_VOLTAGE was set to MAX_CELL_VOLTAGE. Please check the configuration.",
+        f"SOC_RESET_CELL_VOLTAGE ({SOC_RESET_CELL_VOLTAGE} V) is less than MAX_CELL_VOLTAGE ({MAX_CELL_VOLTAGE} V). "
+        "To ensure that the driver still works correctly, SOC_RESET_CELL_VOLTAGE was set to MAX_CELL_VOLTAGE. Please check the configuration.",
     )
-    SOC_RESET_VOLTAGE = MAX_CELL_VOLTAGE
+    SOC_RESET_CELL_VOLTAGE = MAX_CELL_VOLTAGE
 
 
 # --------- SoC Calculation ---------
@@ -195,6 +252,10 @@ CURRENT_MEASURED_BY_USER: list = get_list_from_config("DEFAULT", "CURRENT_MEASUR
 # this allows to calculate linear relationship between the two lists only if needed
 CURRENT_CORRECTION: bool = CURRENT_REPORTED_BY_BMS != CURRENT_MEASURED_BY_USER
 
+
+# --------- Bluetooth BMS ---------
+BLUETOOTH_USE_POLLING = get_bool_from_config("DEFAULT", "BLUETOOTH_USE_POLLING")
+BLUETOOTH_FORCE_RESET_BLE_STACK = get_bool_from_config("DEFAULT", "BLUETOOTH_FORCE_RESET_BLE_STACK")
 
 # --------- Daisy Chain Configuration (Multiple BMS on one cable) ---------
 BATTERY_ADDRESSES: list = get_list_from_config("DEFAULT", "BATTERY_ADDRESSES", str)
@@ -233,12 +294,6 @@ if not BLOCK_ON_DISCONNECT:
         BLOCK_ON_DISCONNECT = True
 
 
-# --------- Charge mode ---------
-LINEAR_LIMITATION_ENABLE: bool = get_bool_from_config("DEFAULT", "LINEAR_LIMITATION_ENABLE")
-LINEAR_RECALCULATION_EVERY: int = get_int_from_config("DEFAULT", "LINEAR_RECALCULATION_EVERY")
-LINEAR_RECALCULATION_ON_PERC_CHANGE: int = get_int_from_config("DEFAULT", "LINEAR_RECALCULATION_ON_PERC_CHANGE")
-
-
 # --------- External Sensor for Current and/or SoC ---------
 EXTERNAL_SENSOR_DBUS_DEVICE: Union[str, None] = config["DEFAULT"]["EXTERNAL_SENSOR_DBUS_DEVICE"] or None
 EXTERNAL_SENSOR_DBUS_PATH_CURRENT: Union[str, None] = config["DEFAULT"]["EXTERNAL_SENSOR_DBUS_PATH_CURRENT"] or None
@@ -252,6 +307,12 @@ check_config_issue(
 )
 
 
+# --------- Charge mode ---------
+CHARGE_MODE: int = get_int_from_config("DEFAULT", "CHARGE_MODE")
+CVL_RECALCULATION_EVERY: int = get_int_from_config("DEFAULT", "CVL_RECALCULATION_EVERY")
+CVL_RECALCULATION_ON_MAX_PERCENTAGE_CHANGE: int = get_int_from_config("DEFAULT", "CVL_RECALCULATION_ON_MAX_PERCENTAGE_CHANGE")
+
+
 # --------- Charge Voltage Limitation (affecting CVL) ---------
 CVCM_ENABLE: bool = get_bool_from_config("DEFAULT", "CVCM_ENABLE")
 """
@@ -259,15 +320,26 @@ Charge voltage control management
 
 Limits max charging voltage (CVL). Switch from max to float voltage and back.
 """
-CELL_VOLTAGE_DIFF_KEEP_MAX_VOLTAGE_UNTIL: float = get_float_from_config("DEFAULT", "CELL_VOLTAGE_DIFF_KEEP_MAX_VOLTAGE_UNTIL")
-CELL_VOLTAGE_DIFF_KEEP_MAX_VOLTAGE_TIME_RESTART: float = get_float_from_config("DEFAULT", "CELL_VOLTAGE_DIFF_KEEP_MAX_VOLTAGE_TIME_RESTART")
-CELL_VOLTAGE_DIFF_TO_RESET_VOLTAGE_LIMIT: float = get_float_from_config("DEFAULT", "CELL_VOLTAGE_DIFF_TO_RESET_VOLTAGE_LIMIT")
-MAX_VOLTAGE_TIME_SEC: int = get_int_from_config("DEFAULT", "MAX_VOLTAGE_TIME_SEC")
-SOC_LEVEL_TO_RESET_VOLTAGE_LIMIT: int = get_int_from_config("DEFAULT", "SOC_LEVEL_TO_RESET_VOLTAGE_LIMIT")
+SWITCH_TO_FLOAT_WAIT_FOR_SEC: int = get_int_from_config("DEFAULT", "SWITCH_TO_FLOAT_WAIT_FOR_SEC", 0)
+SWITCH_TO_FLOAT_CELL_VOLTAGE_DIFF: float = get_float_from_config("DEFAULT", "SWITCH_TO_FLOAT_CELL_VOLTAGE_DIFF", 10)
+SWITCH_TO_FLOAT_CELL_VOLTAGE_DEVIATION: float = get_float_from_config("DEFAULT", "SWITCH_TO_FLOAT_CELL_VOLTAGE_DEVIATION", 0)
+
+SWITCH_TO_BULK_SOC_THRESHOLD: int = get_int_from_config("DEFAULT", "SWITCH_TO_BULK_SOC_THRESHOLD", 0)
+SWITCH_TO_BULK_CELL_VOLTAGE_DIFF: float = get_float_from_config("DEFAULT", "SWITCH_TO_BULK_CELL_VOLTAGE_DIFF", 10)
+
+
+# Common configuration checks
+if SWITCH_TO_BULK_SOC_THRESHOLD <= 0 and SWITCH_TO_BULK_CELL_VOLTAGE_DIFF >= 0.101:
+    logger.warning(
+        "Your current configuration very likely prevents the switch from FLOAT to BULK."
+        f"SWITCH_TO_BULK_SOC_THRESHOLD is set to {SWITCH_TO_BULK_SOC_THRESHOLD} and "
+        f"SWITCH_TO_BULK_CELL_VOLTAGE_DIFF is set to {SWITCH_TO_BULK_CELL_VOLTAGE_DIFF}."
+    )
+    logger.warning("Please check the configuration and adjust the values accordingly.")
 
 
 # --------- Cell Voltage Limitation (affecting CVL) ---------
-CVL_ICONTROLLER_MODE: bool = get_bool_from_config("DEFAULT", "CVL_ICONTROLLER_MODE")
+CVL_CONTROLLER_MODE: int = get_int_from_config("DEFAULT", "CVL_CONTROLLER_MODE")
 CVL_ICONTROLLER_FACTOR: float = get_float_from_config("DEFAULT", "CVL_ICONTROLLER_FACTOR")
 
 
@@ -292,9 +364,9 @@ check_config_issue(
 )
 
 check_config_issue(
-    SOC_RESET_AFTER_DAYS and CELL_VOLTAGES_WHILE_CHARGING[0] < SOC_RESET_VOLTAGE and MAX_CHARGE_CURRENT_CV[0] == 0,
-    f"Maximum value of CELL_VOLTAGES_WHILE_CHARGING ({CELL_VOLTAGES_WHILE_CHARGING[0]} V) is lower than SOC_RESET_VOLTAGE ({SOC_RESET_VOLTAGE} V). "
-    "SOC_RESET_VOLTAGE will never be reached this way and battery will not change to float. Please check the configuration.",
+    SOC_RESET_AFTER_DAYS and CELL_VOLTAGES_WHILE_CHARGING[0] < SOC_RESET_CELL_VOLTAGE and MAX_CHARGE_CURRENT_CV[0] == 0,
+    f"Maximum value of CELL_VOLTAGES_WHILE_CHARGING ({CELL_VOLTAGES_WHILE_CHARGING[0]} V) is lower than SOC_RESET_CELL_VOLTAGE ({SOC_RESET_CELL_VOLTAGE} V). "
+    "SOC_RESET_CELL_VOLTAGE will never be reached this way and battery will not change to float. Please check the configuration.",
 )
 
 check_config_issue(
@@ -342,6 +414,37 @@ MAX_DISCHARGE_CURRENT_T: List[float] = get_list_from_config("DEFAULT", "MAX_DISC
 check_config_issue(
     MAX_BATTERY_DISCHARGE_CURRENT not in MAX_DISCHARGE_CURRENT_T,
     f"In MAX_DISCHARGE_CURRENT_T_FRACTION ({', '.join(map(str, get_list_from_config('DEFAULT', 'MAX_DISCHARGE_CURRENT_T_FRACTION', float)))}) "
+    "there is no value set to 1. This means that the battery will never use the maximum discharge current. Please check the configuration.",
+)
+
+# --------- MOSFET Temperature Current Limitation (affecting CCL/DCL) ---------
+CCCM_T_MOSFET_ENABLE: bool = get_bool_from_config("DEFAULT", "CCCM_T_MOSFET_ENABLE")
+"""
+Charge current control management referring to MOSFET temperature
+"""
+DCCM_T_MOSFET_ENABLE: bool = get_bool_from_config("DEFAULT", "DCCM_T_MOSFET_ENABLE")
+"""
+Discharge current control management referring to MOSFET temperature
+"""
+MOSFET_TEMPERATURES_WHILE_CHARGING: List[float] = get_list_from_config("DEFAULT", "MOSFET_TEMPERATURES_WHILE_CHARGING", float)
+MAX_CHARGE_CURRENT_T_MOSFET: List[float] = get_list_from_config(
+    "DEFAULT", "MAX_CHARGE_CURRENT_T_MOSFET_FRACTION", lambda v: MAX_BATTERY_CHARGE_CURRENT * float(v)
+)
+
+check_config_issue(
+    MAX_BATTERY_CHARGE_CURRENT not in MAX_CHARGE_CURRENT_T_MOSFET,
+    f"In MAX_CHARGE_CURRENT_T_MOSFET_FRACTION ({', '.join(map(str, get_list_from_config('DEFAULT', 'MAX_CHARGE_CURRENT_T_MOSFET_FRACTION', float)))}) "
+    "there is no value set to 1. This means that the battery will never use the maximum charge current. Please check the configuration.",
+)
+
+MOSFET_TEMPERATURES_WHILE_DISCHARGING: List[float] = get_list_from_config("DEFAULT", "MOSFET_TEMPERATURES_WHILE_DISCHARGING", float)
+MAX_DISCHARGE_CURRENT_T_MOSFET: List[float] = get_list_from_config(
+    "DEFAULT", "MAX_DISCHARGE_CURRENT_T_MOSFET_FRACTION", lambda v: MAX_BATTERY_DISCHARGE_CURRENT * float(v)
+)
+
+check_config_issue(
+    MAX_BATTERY_DISCHARGE_CURRENT not in MAX_DISCHARGE_CURRENT_T_MOSFET,
+    f"In MAX_DISCHARGE_CURRENT_T_MOSFET_FRACTION ({', '.join(map(str, get_list_from_config('DEFAULT', 'MAX_DISCHARGE_CURRENT_T_MOSFET_FRACTION', float)))}) "
     "there is no value set to 1. This means that the battery will never use the maximum discharge current. Please check the configuration.",
 )
 
@@ -409,11 +512,17 @@ PUBLISH_CONFIG_VALUES: bool = get_bool_from_config("DEFAULT", "PUBLISH_CONFIG_VA
 PUBLISH_BATTERY_DATA_AS_JSON: bool = get_bool_from_config("DEFAULT", "PUBLISH_BATTERY_DATA_AS_JSON")
 BATTERY_CELL_DATA_FORMAT: int = get_int_from_config("DEFAULT", "BATTERY_CELL_DATA_FORMAT")
 MIDPOINT_ENABLE: bool = get_bool_from_config("DEFAULT", "MIDPOINT_ENABLE")
-TEMPERATURE_SOURCE_BATTERY: int = get_int_from_config("DEFAULT", "TEMPERATURE_SOURCE_BATTERY")
+TEMPERATURE_SOURCE_BATTERY: List[int] = get_list_from_config("DEFAULT", "TEMPERATURE_SOURCE_BATTERY", int)
 TEMPERATURE_1_NAME: str = config["DEFAULT"]["TEMPERATURE_1_NAME"]
 TEMPERATURE_2_NAME: str = config["DEFAULT"]["TEMPERATURE_2_NAME"]
 TEMPERATURE_3_NAME: str = config["DEFAULT"]["TEMPERATURE_3_NAME"]
 TEMPERATURE_4_NAME: str = config["DEFAULT"]["TEMPERATURE_4_NAME"]
+TEMPERATURE_NAMES: dict = {
+    1: config["DEFAULT"]["TEMPERATURE_1_NAME"],
+    2: config["DEFAULT"]["TEMPERATURE_2_NAME"],
+    3: config["DEFAULT"]["TEMPERATURE_3_NAME"],
+    4: config["DEFAULT"]["TEMPERATURE_4_NAME"],
+}
 GUI_PARAMETERS_SHOW_ADDITIONAL_INFO: bool = get_bool_from_config("DEFAULT", "GUI_PARAMETERS_SHOW_ADDITIONAL_INFO")
 TELEMETRY: bool = get_bool_from_config("DEFAULT", "TELEMETRY")
 
@@ -439,6 +548,11 @@ GREENMETER_ADDRESS: int = get_int_from_config("DEFAULT", "GREENMETER_ADDRESS")
 LIPRO_START_ADDRESS: int = get_int_from_config("DEFAULT", "LIPRO_START_ADDRESS")
 LIPRO_END_ADDRESS: int = get_int_from_config("DEFAULT", "LIPRO_END_ADDRESS")
 LIPRO_CELL_COUNT: int = get_int_from_config("DEFAULT", "LIPRO_CELL_COUNT")
+
+# -- UBMS settings
+UBMS_CAN_MODULE_SERIES: int = get_int_from_config("DEFAULT", "UBMS_CAN_MODULE_SERIES")
+UBMS_CAN_MODULE_PARALLEL: int = get_int_from_config("DEFAULT", "UBMS_CAN_MODULE_PARALLEL")
+
 
 HOMEASSISTANT_BASE_URL =config["DEFAULT"]["HOMEASSISTANT_BASE_URL"]
 HOMEASSISTANT_TOKEN = config["DEFAULT"]["HOMEASSISTANT_TOKEN"]
@@ -571,6 +685,25 @@ def bytearray_to_string(data: bytearray) -> str:
     return "".join(f"\\x{byte:02x}" for byte in data)
 
 
+def get_connection_error_message(battery_online: bool, suffix: str = None) -> None:
+    """
+    This method is used to check if the connection to the BMS is successful.
+    It returns True if the connection is successful, otherwise False.
+    It also handles the error logging if the connection is lost.
+
+    :battery_online: Boolean indicating if the battery is online
+    :suffix: Optional suffix to add to the error message
+    :return: True if the connection is successful, otherwise False
+    """
+    if battery_online is None:
+        logger.info("  |- No battery recognized")
+        return
+
+    if battery_online:
+        logger.error(">>> No response from battery. Connection lost or battery not recognized. Check cabeling!" + (" " + suffix if suffix else ""))
+        return
+
+
 def open_serial_port(port: str, baud: int) -> Union[serial.Serial, None]:
     """
     Open a serial port.
@@ -596,6 +729,7 @@ def read_serialport_data(
     length_check: int,
     length_fixed: Union[int, None] = None,
     length_size: str = "B",
+    battery_online: bool = True,
 ) -> bytearray:
     """
     Read data from a serial port
@@ -606,6 +740,7 @@ def read_serialport_data(
     :param length_check: Length of the checksum
     :param length_fixed: Fixed length of the data, if not set it will be read from the data
     :param length_size: Size of the length byte, can be "B", "H", "I" or "L"
+    :param battery_online: Boolean indicating if the battery is online
     :return: Data read from the serial port
     """
     try:
@@ -628,7 +763,7 @@ def read_serialport_data(
             toread = ser.inWaiting()
             count += 1
             if count > 50:
-                logger.error(">>> ERROR: No reply - returning")
+                get_connection_error_message(battery_online)
                 return False
 
         # logger.info('serial data toread ' + str(toread))
@@ -637,7 +772,7 @@ def read_serialport_data(
             length = length_fixed
         else:
             if len(res) < (length_pos + length_byte_size):
-                logger.error(">>> ERROR: No reply - returning [len:" + str(len(res)) + "]")
+                get_connection_error_message(battery_online, "[len:" + str(len(res)) + "]")
                 return False
             length = unpack_from(">" + length_size, res, length_pos)[0]
 
@@ -652,7 +787,7 @@ def read_serialport_data(
             sleep(0.005)
             count += 1
             if count > 150:
-                logger.error(">>> ERROR: No reply - returning [len:" + str(len(data)) + "/" + str(length + length_check) + "]")
+                get_connection_error_message(battery_online, "[len:" + str(len(data)) + "/" + str(length + length_check) + "]")
                 return False
 
         return data
@@ -681,6 +816,7 @@ def read_serial_data(
     length_check: int,
     length_fixed: Union[int, None] = None,
     length_size: str = "B",
+    battery_online: bool = True,
 ) -> bytearray:
     """
     Read data from a serial port
@@ -692,16 +828,23 @@ def read_serial_data(
     :param length_check: Length of the checksum
     :param length_fixed: Fixed length of the data, if not set it will be read from the data
     :param length_size: Size of the length byte, can be "B", "H", "I" or "L"
+    :param battery_online: Boolean indicating if the battery is online
     :return: Data read from the serial port
     """
+    ser = None  # Initialize ser to None
     try:
         with serial.Serial(port, baudrate=baud, timeout=0.1) as ser:
-            return read_serialport_data(ser, command, length_pos, length_check, length_fixed, length_size)
+            return read_serialport_data(ser, command, length_pos, length_check, length_fixed, length_size, battery_online)
 
     except serial.SerialException as e:
         logger.error(e)
-        # close the serial port
-        ser.close()
+        if ser is not None:
+            # close the serial port if it was opened
+            ser.close()
+            logger.error("Serial port closed")
+        else:
+            logger.error("Serial port could not be opened")
+
         return False
 
     except Exception:
@@ -715,6 +858,18 @@ def read_serial_data(
         logger.error(f"Exception occurred: {repr(exception_object)} of type {exception_type} in {file} line #{line}")
 
 
+def safe_number_format(value: float, fmt: str = "{:.2f}", default=None) -> str:
+    """
+    Format a value safely, returning a default value if the value is None.
+
+    :param value: Value to format
+    :param fmt: Format string (default: "{:.2f}")
+    :param default: Default value to return if value is None
+    :return: Formatted value or default value
+    """
+    return fmt.format(value) if value is not None else default
+
+
 def validate_config_values() -> bool:
     """
     Validate the config values and log any issues.
@@ -722,12 +877,23 @@ def validate_config_values() -> bool:
 
     :return: True if there are no errors else False
     """
+    # Add empty line for better readability
+    if len(errors_in_config) > 0:
+        logger.error("")
+        logger.error("*** CONFIG ISSUES DETECTED ***")
+
     # loop through all errors and log them
     for error in errors_in_config:
-        logger.error(error)
+        logger.error("- " + error)
 
     # return True if there are no errors
-    return len(errors_in_config) == 0
+    if len(errors_in_config) == 0:
+        return True
+    else:
+        logger.error("The driver may not behave as expected due to the above issues.")
+        logger.error(">>> Please check the CHANGELOG.md for option changes and the config.default.ini for all available options!")
+        logger.error("")
+        return False
 
 
 def publish_config_variables(dbusservice) -> None:
@@ -741,6 +907,36 @@ def publish_config_variables(dbusservice) -> None:
             continue
         if isinstance(value, float) or isinstance(value, int) or isinstance(value, str) or isinstance(value, List):
             dbusservice.add_path(f"/Info/Config/{variable}", value)
+
+
+def get_venus_os_version() -> str:
+    """
+    Get the Venus OS version.
+
+    :return: Venus OS version, e.g. v3.60
+    """
+    with open("/opt/victronenergy/version", "r") as f:
+        return f.readline().strip()
+
+
+def get_venus_os_image_type() -> str:
+    """
+    Get the Venus OS image type
+
+    :return: Venus OS image type: normal or large
+    """
+    with open("/etc/venus/image-type", "r") as f:
+        return f.readline().strip()
+
+
+def get_venus_os_device_type() -> str:
+    """
+    Get the Venus OS device type.
+
+    :return: Venus OS device type, e.g. Venus GX, Cerbo GX, etc.
+    """
+    with open("/sys/firmware/devicetree/base/model", "r") as f:
+        return f.readline().strip()
 
 
 # Save the local variables to publish them wtih publish_config_variables() to the dbus

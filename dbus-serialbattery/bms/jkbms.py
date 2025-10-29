@@ -28,7 +28,7 @@ class Jkbms(Battery):
     # byte 5 is default 0x00
     # byte 6 to 8 is the dimension or ID number
     # to test with a RS485 adapter where the address can be set
-    command_status = b"\x4E\x57\x00\x13\x00\x00\x00\x00\x06\x03\x00\x00\x00\x00\x00\x00\x68\x00\x00\x01\x29"
+    command_status = b"\x4e\x57\x00\x13\x00\x00\x00\x00\x06\x03\x00\x00\x00\x00\x00\x00\x68\x00\x00\x01\x29"
     homeassistant_token: str = utils.HOMEASSISTANT_TOKEN
     homeassistantBaseUrl: str = utils.HOMEASSISTANT_BASE_URL
     max_allowed_charge_current_entity_id = utils.MAX_ALLOWED_BATTERY_CHARGE_CURRENT_ENTITY_ID
@@ -137,7 +137,7 @@ class Jkbms(Battery):
         cellbyte_count = unpack_from(">B", self.get_data(status_data, b"\x79", offset, 1))[0]
 
         offset = cellbyte_count + 30
-        cell_count = unpack_from(">H", self.get_data(status_data, b"\x8A", offset, 2))[0]
+        cell_count = unpack_from(">H", self.get_data(status_data, b"\x8a", offset, 2))[0]
         # check if the cell count is valid
         if cell_count > 0:
             self.cell_count = cell_count
@@ -214,45 +214,45 @@ class Jkbms(Battery):
         # offset = cellbyte_count + 25
         # self.capacity_remain = unpack_from('>L', self.get_data(status_data, b'\x89', offset, 4))[0]
         offset = cellbyte_count + 121
-        capacity = unpack_from(">L", self.get_data(status_data, b"\xAA", offset, 4))[0]
+        capacity = unpack_from(">L", self.get_data(status_data, b"\xaa", offset, 4))[0]
         # check if the capacity is valid
         if capacity >= 0:
             self.capacity = capacity
 
         offset = cellbyte_count + 33
-        self.to_protection_bits(unpack_from(">H", self.get_data(status_data, b"\x8B", offset, 2))[0])
+        self.to_protection_bits(unpack_from(">H", self.get_data(status_data, b"\x8b", offset, 2))[0])
 
         offset = cellbyte_count + 36
-        self.to_fet_bits(unpack_from(">H", self.get_data(status_data, b"\x8C", offset, 2))[0])
+        self.to_fet_bits(unpack_from(">H", self.get_data(status_data, b"\x8c", offset, 2))[0])
 
         offset = cellbyte_count + 84
-        self.to_balance_bits(unpack_from(">B", self.get_data(status_data, b"\x9D", offset, 1))[0])
+        self.to_balance_bits(unpack_from(">B", self.get_data(status_data, b"\x9d", offset, 1))[0])
 
         # "User Private Data" field in APP
         offset = cellbyte_count + 155
         tmp = sub(
             " +",
             " ",
-            (unpack_from(">8s", self.get_data(status_data, b"\xB4", offset, 8))[0].decode().replace("\x00", " ").strip()),
+            (unpack_from(">8s", self.get_data(status_data, b"\xb4", offset, 8))[0].decode().replace("\x00", " ").strip()),
         )
         self.custom_field = tmp if tmp != "Input Us" else None
 
         # production date
         try:
             offset = cellbyte_count + 164
-            tmp = unpack_from(">4s", self.get_data(status_data, b"\xB5", offset, 4))[0].decode()
+            tmp = unpack_from(">4s", self.get_data(status_data, b"\xb5", offset, 4))[0].decode()
             self.production = "20" + tmp + "01" if tmp and tmp != "" else None
         except UnicodeDecodeError:
             self.production = None
 
         offset = cellbyte_count + 174
-        self.version = unpack_from(">15s", self.get_data(status_data, b"\xB7", offset, 15))[0].decode().replace("_", " ").strip()
+        self.version = unpack_from(">15s", self.get_data(status_data, b"\xb7", offset, 15))[0].decode().replace("_", " ").strip()
 
         offset = cellbyte_count + 197
         self.unique_identifier_tmp = sub(
             " +",
             "_",
-            (unpack_from(">24s", self.get_data(status_data, b"\xBA", offset, 24))[0].decode().replace("\x00", " ").replace("Input Userda", "").strip()),
+            (unpack_from(">24s", self.get_data(status_data, b"\xba", offset, 24))[0].decode().replace("\x00", " ").replace("Input Userda", "").strip()),
         )
         if ("2024" in self.production and 310 == self.capacity):
             self.unique_identifier_value = "Neu MB310"
@@ -377,6 +377,7 @@ class Jkbms(Battery):
             self.LENGTH_CHECK,
             None,
             self.LENGTH_SIZE,
+            battery_online=self.online,
         )
         if data is False:
             return False

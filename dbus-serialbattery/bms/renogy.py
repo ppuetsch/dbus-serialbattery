@@ -25,18 +25,18 @@ class Renogy(Battery):
     # Core data = voltage, temp, current, soc
     command_cell_count = b"\x13\x88\x00\x01"  # Register  5000
     command_cell_voltages = b"\x13\x89\x00\x04"  # Registers 5001-5004
-    command_cell_temperatures = b"\x13\x9A\x00\x04"  # Registers 5018-5021
-    command_total_voltage = b"\x13\xB3\x00\x01"  # Register  5043
-    command_bms_temperature_1 = b"\x13\xAD\x00\x01"  # Register  5037
-    command_bms_temperature_2 = b"\x13\xB0\x00\x01"  # Register  5040
-    command_current = b"\x13\xB2\x00\x01"  # Register  5042 (signed int)
-    command_capacity = b"\x13\xB6\x00\x02"  # Registers 5046-5047 (long)
-    command_soc = b"\x13\xB2\x00\x04"  # Registers 5042-5045 (amps, volts, soc as long)
+    command_cell_temperatures = b"\x13\x9a\x00\x04"  # Registers 5018-5021
+    command_total_voltage = b"\x13\xb3\x00\x01"  # Register  5043
+    command_bms_temperature_1 = b"\x13\xad\x00\x01"  # Register  5037
+    command_bms_temperature_2 = b"\x13\xb0\x00\x01"  # Register  5040
+    command_current = b"\x13\xb2\x00\x01"  # Register  5042 (signed int)
+    command_capacity = b"\x13\xb6\x00\x02"  # Registers 5046-5047 (long)
+    command_soc = b"\x13\xb2\x00\x04"  # Registers 5042-5045 (amps, volts, soc as long)
     # Battery info
-    command_manufacturer = b"\x14\x0C\x00\x08"  # Registers 5132-5139 (8 byte string)
+    command_manufacturer = b"\x14\x0c\x00\x08"  # Registers 5132-5139 (8 byte string)
     command_model = b"\x14\x02\x00\x08"  # Registers 5122-5129 (8 byte string)
-    command_serial_number = b"\x13\xF6\x00\x08"  # Registers 5110-5117 (8 byte string)
-    command_firmware_version = b"\x14\x0A\x00\x02"  # Registers 5130-5131 (2 byte string)
+    command_serial_number = b"\x13\xf6\x00\x08"  # Registers 5110-5117 (8 byte string)
+    command_firmware_version = b"\x14\x0a\x00\x02"  # Registers 5130-5131 (2 byte string)
     # BMS warning and protection config
 
     def unique_identifier(self) -> str:
@@ -240,6 +240,7 @@ class Renogy(Battery):
             self.baud_rate,
             self.LENGTH_POS,
             self.LENGTH_CHECK,
+            battery_online=self.online,
         )
         if data is False:
             return False

@@ -33,9 +33,12 @@ class LiTime_Ble(Battery):
         self.ble_handle = Syncron_Ble(
             self.address, read_characteristic="0000ffe1-0000-1000-8000-00805f9b34fb", write_characteristic="0000ffe2-0000-1000-8000-00805f9b34fb"
         )
-        self.request_and_proccess_battery_staus()
 
-        return True
+        if self.ble_handle.connected:
+            self.request_and_proccess_battery_staus()
+            return True
+        else:
+            return False
 
     def unique_identifier(self) -> str:
         return self.address
@@ -158,9 +161,12 @@ class LiTime_Ble(Battery):
         temperature_mos = mosfet_temp
         self.to_temperature(0, temperature_mos)
 
-        self.capacity_remaining = remaining_amph
+        self.capacity_remain = remaining_amph
         self.history.total_ah_drawn = discharges_amph_count
         self.history.full_discharges = discharges_count
+
+    def get_settings():
+        return True
 
     def request_and_proccess_battery_staus(self):
         data = self.ble_handle.send_data(self.query_battery_status)

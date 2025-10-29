@@ -14,6 +14,7 @@ from gi.repository import GLib as gobject
 from battery import Battery
 from dbushelper import DbusHelper
 from utils import (
+    BATTERY_ADDRESSES,
     BMS_TYPE,
     bytearray_to_string,
     DRIVER_VERSION,
@@ -21,8 +22,10 @@ from utils import (
     EXTERNAL_SENSOR_DBUS_DEVICE,
     EXTERNAL_SENSOR_DBUS_PATH_CURRENT,
     EXTERNAL_SENSOR_DBUS_PATH_SOC,
+    get_venus_os_version,
+    get_venus_os_image_type,
+    get_venus_os_device_type,
     logger,
-    BATTERY_ADDRESSES,
     POLL_INTERVAL,
     validate_config_values,
 )
@@ -39,6 +42,7 @@ from bms.heltecmodbus import HeltecModbus
 from bms.hlpdatabms4s import HLPdataBMS4S
 from bms.jkbms import Jkbms
 from bms.jkbms_pb import Jkbms_pb
+from bms.ks48100 import KS48100
 from bms.lltjbd import LltJbd
 from bms.pace import Pace
 from bms.renogy import Renogy
@@ -59,6 +63,7 @@ if "Sinowealth" in BMS_TYPE:
 supported_bms_types = [
     {"bms": Daly, "baud": 9600, "address": b"\x40"},
     {"bms": Daly, "baud": 9600, "address": b"\x80"},
+    {"bms": Daren485, "baud": 9600, "address": b"\x01"},
     {"bms": Daren485, "baud": 19200, "address": b"\x01"},
     {"bms": Ecs, "baud": 19200},
     {"bms": EG4_Lifepower, "baud": 9600, "address": b"\x01"},
@@ -68,10 +73,11 @@ supported_bms_types = [
     {"bms": HLPdataBMS4S, "baud": 9600},
     {"bms": Jkbms, "baud": 115200},
     {"bms": Jkbms_pb, "baud": 115200, "address": b"\x01"},
+    {"bms": KS48100, "baud": 9600, "address": b"\x01"},
     {"bms": LltJbd, "baud": 9600, "address": b"\x00"},
     {"bms": Pace, "baud": 9600, "address": b"\x00"},
     {"bms": Renogy, "baud": 9600, "address": b"\x30"},
-    {"bms": Renogy, "baud": 9600, "address": b"\xF7"},
+    {"bms": Renogy, "baud": 9600, "address": b"\xf7"},
     {"bms": Seplos, "baud": 19200, "address": b"\x00"},
     {"bms": Seplosv3, "baud": 19200},
 ]
@@ -119,8 +125,9 @@ def main():
                 battery[0].disconnect()
 
         # Stop the CanReceiverThread
-        elif port.startswith("can") or port.startswith("vecan"):
-            can_thread.stop()
+        elif port.startswith(("can", "vecan", "vcan")):
+            if "can_thread" in globals() and can_thread is not None:
+                can_thread.stop()
 
         # Close the serial connection
         else:
@@ -138,12 +145,13 @@ def main():
     def poll_battery(loop) -> bool:
         """
         Polls the battery for data and updates it on the dbus.
-        Calls `publish_battery` from DbusHelper for each battery instance.
+        Calls `publish_battery` from DbusHelper for each battery instance which
+        then calls `refresh_data` from the battery instance to update the data.
 
         :param loop: The main event loop
         :return: Always returns True
         """
-        global count_for_loops, delayed_loop_count
+        global delayed_loop_count
 
         # count execution time in milliseconds
         start = datetime.now()
@@ -178,33 +186,39 @@ def main():
 
         return True
 
-    def get_battery(_port: str, _modbus_address: hex = None, can_transport_interface: object = None) -> Union[Battery, None]:
+    def get_battery(_port: str, _bus_address: hex = None, can_transport_interface: object = None) -> Union[Battery, None]:
         """
         Attempts to establish a connection to the battery and returns the battery object if successful.
 
         :param _port: The port to connect to.
-        :param _modbus_address: The Modbus address to connect to (optional).
+        :param _bus_address: The Modbus/CAN address to connect to (optional).
         :return: The battery object if a connection is established, otherwise None.
         """
         # Try to establish communications with the battery 3 times, else exit
         retry = 1
         retries = 3
         while retry <= retries:
+            if retry > 1:
+                logger.info("")
+
             logger.info("-- Testing BMS: " + str(retry) + " of " + str(retries) + " rounds")
             # Create a new battery object that can read the battery and run connection test
             for test in expected_bms_types:
                 # noinspection PyBroadException
                 try:
-                    if _modbus_address is not None:
+                    if _bus_address is not None:
                         # Convert hex string to bytes
-                        _bms_address = bytes.fromhex(_modbus_address.replace("0x", ""))
+                        _bms_address = bytes.fromhex(_bus_address.replace("0x", ""))
                     elif "address" in test:
                         _bms_address = test["address"]
                     else:
                         _bms_address = None
 
                     logger.info(
-                        "Testing " + test["bms"].__name__ + (' at address "' + bytearray_to_string(_bms_address) + '"' if _bms_address is not None else "")
+                        "  Testing "
+                        + test["bms"].__name__
+                        + (' at address "' + bytearray_to_string(_bms_address) + '"' if _bms_address is not None else "")
+                        + (" with " + str(test["baud"]) + " baud" if "baud" in test else "")
                     )
                     batteryClass = test["bms"]
                     baud = test["baud"] if "baud" in test else None
@@ -251,7 +265,7 @@ def main():
             logger.info("No Port needed")
             return "/dev/ttyUSB9"
         else:
-            logger.error("ERROR >>> No port specified in the command line arguments")
+            logger.error(">>> No port specified in the command line arguments")
             sleep(60)
             exit_driver(None, None, 1)
 
@@ -279,22 +293,14 @@ def main():
             for bms_type in bms_types:
                 if bms_type not in [bms["bms"].__name__ for bms in supported_bms_types]:
                     logger.error(
-                        f'ERROR >>> BMS type "{bms_type}" is not supported. Supported BMS types are: '
+                        f'>>> BMS type "{bms_type}" is not supported. Supported BMS types are: '
                         + f"{', '.join([bms['bms'].__name__ for bms in supported_bms_types])}"
                         + "; Disabled by default: ANT, MNB, Sinowealth"
                     )
                     exit_driver(None, None, 1)
 
-    # read the version of Venus OS
-    with open("/opt/victronenergy/version", "r") as f:
-        venus_version = f.readline().strip()
-
-    # read the GX device type
-    with open("/sys/firmware/devicetree/base/model", "r") as f:
-        gx_device_type = f.readline().strip()
-
     # show Venus OS version and device type
-    logger.info("Venus OS " + venus_version + " running on " + gx_device_type)
+    logger.info("Venus OS " + get_venus_os_version() + " (" + get_venus_os_image_type() + ") running on " + get_venus_os_device_type())
 
     # show the version of the driver
     logger.info("dbus-serialbattery v" + str(DRIVER_VERSION))
@@ -310,7 +316,9 @@ def main():
         """
 
         if len(sys.argv) <= 2:
-            logger.error("Bluetooth address is missing in the command line arguments")
+            logger.error(">>> Bluetooth address is missing in the command line arguments")
+            sleep(60)
+            exit_driver(None, None, 1)
         else:
             ble_address = sys.argv[2]
 
@@ -318,13 +326,23 @@ def main():
                 # noqa: F401 --> ignore flake "imported but unused" error
                 from bms.jkbms_ble import Jkbms_Ble  # noqa: F401
 
-            if port == "LltJbd_Ble":
+            elif port == "Kilovault_Ble":
+                # noqa: F401 --> ignore flake "imported but unused" error
+                from bms.kilovault_ble import Kilovault_Ble  # noqa: F401
+
+            elif port == "LiTime_Ble":
+                # noqa: F401 --> ignore flake "imported but unused" error
+                from bms.litime_ble import LiTime_Ble  # noqa: F401
+
+            elif port == "LltJbd_Ble":
                 # noqa: F401 --> ignore flake "imported but unused" error
                 from bms.lltjbd_ble import LltJbd_Ble  # noqa: F401
 
-            if port == "LiTime_Ble":
-                # noqa: F401 --> ignore flake "imported but unused" error
-                from bms.litime_ble import LiTime_Ble  # noqa: F401
+            else:
+                logger.error(">>> Unknown Bluetooth BMS type: " + port)
+                logger.error("Supported Bluetooth BMS types (CASE SENSITIVE!): Jkbms_Ble, Kilovault_Ble, LiTime_Ble, LltJbd_Ble")
+                sleep(60)
+                exit_driver(None, None, 1)
 
             class_ = eval(port)
 
@@ -336,18 +354,26 @@ def main():
                 battery[0] = testbms
 
     # CAN
-    elif port.startswith("can") or port.startswith("vecan"):
+    elif port.startswith(("can", "vecan", "vcan")):
         """
         Import CAN classes only if it's a CAN port; otherwise, the driver won't start due to missing Python modules.
         This prevents issues when using the driver exclusively with a serial connection.
+
+        can: Older GX devices and Raspberry Pi with CAN hat
+        vecan: Newer Venus GX devices
+        vcan: Virtual CAN interface for testing
         """
         from bms.daly_can import Daly_Can
         from bms.jkbms_can import Jkbms_Can
+        from bms.rv_c_can import RV_C_Can
+        from bms.ubms_can import Ubms_Can
 
         # only try CAN BMS on CAN port
         supported_bms_types = [
             {"bms": Daly_Can},
             {"bms": Jkbms_Can},
+            {"bms": RV_C_Can},
+            {"bms": Ubms_Can},
         ]
 
         # check if BMS_TYPE is not empty and all BMS types in the list are supported
@@ -355,45 +381,51 @@ def main():
 
         expected_bms_types = [battery_type for battery_type in supported_bms_types if battery_type["bms"].__name__ in BMS_TYPE or len(BMS_TYPE) == 0]
 
+        # If no BMS type is supported, use all supported BMS types
+        if len(expected_bms_types) == 0:
+            logger.warning(f"No supported CAN BMS type found in BMS_TYPE: {', '.join(BMS_TYPE)}. Using all supported BMS types.")
+            expected_bms_types = supported_bms_types
+
         # start the corresponding CanReceiverThread if BMS for this type found
         from utils_can import CanReceiverThread, CanTransportInterface
 
         try:
             can_thread = CanReceiverThread.get_instance(bustype="socketcan", channel=port)
         except Exception as e:
-            print(f"Error: {e}")
+            logger.error(f"Error while accessing CAN interface: {e}")
+            sleep(60)
+            exit_driver(None, None, 1)
 
-        logger.debug("Wait shortly to make sure that all needed data is in the cache")
-        # Slowest message cycle trasmission is every 1 second, wait a bit more for the fist time to fetch all needed data
-        sleep(2)
+        # wait until thread has initialized
+        if not can_thread.can_initialised.wait(2):
+            logger.error("Timeout while accessing CAN interface")
+            sleep(60)
+            exit_driver(None, None, 1)
 
         can_transport_interface = CanTransportInterface()
         can_transport_interface.can_message_cache_callback = can_thread.get_message_cache
         can_transport_interface.can_bus = can_thread.can_bus
+        logger.debug("Wait shortly to make sure that all needed data is in the cache")
+        # Slowest message cycle transmission is every 1 second, wait a bit more for the first time to fetch all needed data (only jk bms)
+        sleep(2)
+        addresses = [None] if len(BATTERY_ADDRESSES) == 0 else BATTERY_ADDRESSES  # use default address, if not configured
 
-        # if there are no messages in the cache after sleeping, something is wrong
-        if not can_transport_interface.can_message_cache_callback().items():
-            if can_thread.initial_interface_state is False:
-                logger.info("Found no messages on can bus, trying with 500 kbps")
-                can_thread.setup_can(channel=port, bitrate=500, force=True)
-                sleep(2)
-
-        if not can_transport_interface.can_message_cache_callback().items():
-            logger.error(">>> ERROR: Found no messages on can bus, is it properly configured?")
-
-        # check if BATTERY_ADDRESSES is not empty
-        elif BATTERY_ADDRESSES:
-            logger.info(">>> CAN multi device mode")
-            for address in BATTERY_ADDRESSES:
-                checkbatt = get_battery(port, address, can_transport_interface)
-                if checkbatt is not None:
-                    battery[address] = checkbatt
-                    logger.info("Successful battery connection at " + port + " and this device address " + str(address))
+        for busspeed in [250, 500]:
+            for address in addresses:
+                bat = get_battery(port, address, can_transport_interface)
+                if bat:
+                    battery[address] = bat
+                    logger.info(f"Successful battery connection at {port} and this address {str(address)}")
                 else:
-                    logger.warning("No battery connection at " + port + " and this device address " + str(address))
-        # use default address
-        else:
-            battery[0] = get_battery(port, None, can_transport_interface)
+                    logger.warning(f"No battery connection at {port} and this address {str(address)}")
+
+            # if we've found at least 1 battery, stop the search here. otherwise retry with other bus speeds
+            if len(battery) > 0:
+                break
+
+            logger.info(f"Found no devices on can bus, retrying with {busspeed} kbps")
+            can_thread.setup_can(channel=port, bitrate=busspeed, force=True)
+            sleep(2)
 
     # SERIAL
     else:
@@ -404,16 +436,16 @@ def main():
         # else the error throw a lot of timeouts
         sleep(16)
 
-        # check if BATTERY_ADDRESSES is not empty
+        # Check if BATTERY_ADDRESSES is not empty
         if BATTERY_ADDRESSES:
             for address in BATTERY_ADDRESSES:
-                checkbatt = get_battery(port, address)
-                if checkbatt is not None:
-                    battery[address] = checkbatt
-                    logger.info("Successful battery connection at " + port + " and this Modbus address " + str(address))
+                found_battery = get_battery(port, address)
+                if found_battery:
+                    battery[address] = found_battery
+                    logger.info(f"Successful battery connection at {port} and this address {address}")
                 else:
-                    logger.warning("No battery connection at " + port + " and this Modbus address " + str(address))
-        # use default address
+                    logger.warning(f"No battery connection at {port} and this address {address}")
+        # Use default address
         else:
             battery[0] = get_battery(port)
 
@@ -426,7 +458,9 @@ def main():
 
     if not battery_found:
         logger.error(
-            "ERROR >>> No battery connection at " + port + (" and this Modbus addresses: " + ", ".join(BATTERY_ADDRESSES) if BATTERY_ADDRESSES else "")
+            f">>> No battery connection at {port}"
+            + (" and this bus addresses: " + ", ".join(BATTERY_ADDRESSES) if BATTERY_ADDRESSES else "")
+            + (f" {ble_address}" if port.endswith("_Ble") else "")
         )
         exit_driver(None, None, 1)
 
@@ -443,7 +477,9 @@ def main():
         helper[key_address] = DbusHelper(battery[key_address], key_address)
         if not helper[key_address].setup_vedbus():
             logger.error(
-                "ERROR >>> Problem with battery set up at " + port + (" and this Modbus address: " + ", ".join(BATTERY_ADDRESSES) if BATTERY_ADDRESSES else "")
+                f">>> Problem with battery set up at {port}"
+                + (" and this bus address: " + ", ".join(BATTERY_ADDRESSES) if BATTERY_ADDRESSES else "")
+                + (f" {ble_address}" if port.endswith("_Ble") else "")
             )
             exit_driver(None, None, 1)
 
@@ -466,6 +502,8 @@ def main():
             battery[first_key].poll_interval,
             lambda: poll_battery(mainloop),
         )
+    else:
+        logger.info("Polling interval: active callback used")
 
     # print log at this point, else not all data is correctly populated
     for key_address in battery:

@@ -19,13 +19,13 @@ class Sinowealth(Battery):
         self.temperature_sensors = None
 
     # command bytes [StartFlag=0A][Command byte][response dataLength=2 to 20 bytes][checksum]
-    command_base = b"\x0A\x00\x04"
+    command_base = b"\x0a\x00\x04"
     command_cell_base = b"\x01"
-    command_total_voltage = b"\x0B"
-    command_temperature_ext1 = b"\x0C"
-    command_temperature_ext2 = b"\x0D"
-    command_temperature_int1 = b"\x0E"
-    command_temperature_int2 = b"\x0F"
+    command_total_voltage = b"\x0b"
+    command_temperature_ext1 = b"\x0c"
+    command_temperature_ext2 = b"\x0d"
+    command_temperature_int1 = b"\x0e"
+    command_temperature_int2 = b"\x0f"
     command_current = b"\x10"
     command_capacity = b"\x11"
     command_remaining_capacity = b"\x12"
@@ -288,6 +288,7 @@ class Sinowealth(Battery):
             self.LENGTH_POS,
             self.LENGTH_CHECK,
             int(self.generate_command(command)[2]),
+            battery_online=self.online,
         )
         if data is False:
             return False

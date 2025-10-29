@@ -8,7 +8,7 @@
 
 # avoid importing wildcards, remove unused imports
 from battery import Battery, Cell
-from utils import open_serial_port, logger
+from utils import open_serial_port, get_connection_error_message, logger
 from time import sleep
 from struct import unpack
 from re import findall
@@ -99,7 +99,7 @@ class Daren485(Battery):
 
         if not result:  # TROUBLESHOOTING for no reply errors
             logger.debug(f"get_settings: result: {result}." + " If you don't see this warning very often, you can ignore it.")
-            logger.error(">>> ERROR: No reply - returning")
+            get_connection_error_message(self.online)
 
         return result
 
@@ -191,7 +191,7 @@ class Daren485(Battery):
             # Payload starts at offset 13(packet header) + 12 (command_info)
             payload = response[(13 + 12) : len(response) - 5]
             if len(payload) >= 36:  # 9*4 bytes in full request.
-                self.capacity_remaining = int(int(payload[0:4], base=16) / 100)
+                self.capacity_remain = int(int(payload[0:4], base=16) / 100)
                 self.capacity = int(int(payload[4:8], base=16) / 100)
                 # design_capacity = int(payload[8:12], base=16) / 100 #Not used, for future use.
                 # total_charge_capacity = int(payload[12:20], base=16) / 100 #Not used, for future use.
@@ -244,7 +244,7 @@ class Daren485(Battery):
                 temperature_4 = unpack(">h", bytes.fromhex(payload[102:106]))[0] / 10
                 self.to_temperature(4, temperature_4)
                 self.capacity = int(payload[120:124], base=16) / 100
-                self.capacity_remaining = int(payload[124:128], base=16) / 100
+                self.capacity_remain = int(payload[124:128], base=16) / 100
                 self.history.charge_cycles = int(payload[128:132], base=16)
                 fetstatus = int(payload[148:152], base=16)
 
@@ -568,7 +568,7 @@ class Daren485(Battery):
         Example command (mark the \r at the end):
         ~22014A47E00201FD23␍
         """
-        return self.create_command(self.address, b"\x4A", b"\x47", self.address.hex().upper())
+        return self.create_command(self.address, b"\x4a", b"\x47", "01")
 
     def create_command_get_mfg_params(self):
         """
@@ -583,7 +583,7 @@ class Daren485(Battery):
         commandinfo += "03"
         commandinfo += "FF"  # functionid
         commandinfo += "00"  # functionLEN
-        return self.create_command(self.address, b"\x4A", b"\xB0", commandinfo)
+        return self.create_command(self.address, b"\x4a", b"\xb0", commandinfo)
 
     def create_command_get_cap_params(self):
         """
@@ -598,7 +598,7 @@ class Daren485(Battery):
         commandinfo += "04"
         commandinfo += "FF"  # functionid
         commandinfo += "00"  # functionLEN
-        return self.create_command(self.address, b"\x4A", b"\xB0", commandinfo)
+        return self.create_command(self.address, b"\x4a", b"\xb0", commandinfo)
 
     def create_command_get_realtime_data(self):
         """
@@ -606,7 +606,7 @@ class Daren485(Battery):
         Example command (mark the \r at the end):
         ~22014A42E00201FD28␍
         """
-        return self.create_command(self.address, b"\x4A", b"\x42", self.address.hex().upper())
+        return self.create_command(self.address, b"\x4a", b"\x42", "01")
 
     def create_command_get_manufacturer_info(self):
         """
@@ -614,7 +614,7 @@ class Daren485(Battery):
         Example command (mark the \r at the end):
         ~22014A510000FDA0␍
         """
-        return self.create_command(self.address, b"\x4A", b"\x51")
+        return self.create_command(self.address, b"\x4a", b"\x51")
 
     def create_command(self, addr, cid1, cid2, info=""):
         command = ""

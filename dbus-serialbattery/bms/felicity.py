@@ -31,14 +31,14 @@ class Felicity(Battery):
     command_cell_voltages = b"\x13\x2a\x00\x10"  # Registers 4906
     command_bms_temperature_1_3 = b"\x13\x39\x00\x05"  # Register  4929-4931 (tempsensor1-3)
 
-    command_dvcc = b"\x13\x1C\x00\x04"  # Registers  4892(charger and discharger informations)
+    command_dvcc = b"\x13\x1c\x00\x04"  # Registers  4892(charger and discharger informations)
     command_status = b"\x13\x02\x00\x03"  # Registers 4866(battery status and fault informations)
 
     command_total_voltage_current = b"\x13\x06\x00\x02"  # Register 4870-4871
-    command_bms_temperature_1 = b"\x13\x0A\x00\x01"  # Register  4874 (bms_temp)
-    command_soc = b"\x13\x0B\x00\x01"  # Registers 4875(soc)
-    command_firmware_version = b"\xF8\x0B\x00\x01"  # Registers 63499 (1 byte string)
-    command_serialnumber = b"\xF8\x04\x00\x05"  # Registers 63492 (1 byte string)
+    command_bms_temperature_1 = b"\x13\x0a\x00\x01"  # Register  4874 (bms_temp)
+    command_soc = b"\x13\x0b\x00\x01"  # Registers 4875(soc)
+    command_firmware_version = b"\xf8\x0b\x00\x01"  # Registers 63499 (1 byte string)
+    command_serialnumber = b"\xf8\x04\x00\x05"  # Registers 63492 (1 byte string)
 
     # BMS warning and protection config
 
@@ -274,7 +274,14 @@ class Felicity(Battery):
 
     def read_serial_data_felicity(self, command):
         # use the read_serial_data() function to read the data and then do BMS spesific checks (crc, start bytes, etc)
-        data = read_serial_data(self.generate_command(command), self.port, self.baud_rate, self.LENGTH_POS, self.LENGTH_CHECK)
+        data = read_serial_data(
+            self.generate_command(command),
+            self.port,
+            self.baud_rate,
+            self.LENGTH_POS,
+            self.LENGTH_CHECK,
+            battery_online=self.online,
+        )
         # logger.debug(">>> INFO: Query: %s",self.generate_command(command))
         # logger.debug(">>> INFO: Result All: %s", data)
         if data is False:

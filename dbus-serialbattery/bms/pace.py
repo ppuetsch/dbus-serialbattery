@@ -5,7 +5,6 @@
 
 from battery import Battery, Cell
 from utils import read_serial_data, logger
-import utils
 import sys
 
 
@@ -26,19 +25,19 @@ class Pace(Battery):
 
     @property
     def command_status(self):
-        return b"\x7E\x32\x35\x30\x30\x34\x36\x34\x32\x45\x30\x30\x32\x46\x46\x46\x44\x30\x36\x0D"
+        return b"\x7e\x32\x35\x30\x30\x34\x36\x34\x32\x45\x30\x30\x32\x46\x46\x46\x44\x30\x36\x0d"
 
     @property
     def command_software_version(self):
-        return b"\x7E\x32\x35\x30\x30\x34\x36\x43\x31\x30\x30\x30\x30\x46\x44\x39\x42\x0D"
+        return b"\x7e\x32\x35\x30\x30\x34\x36\x43\x31\x30\x30\x30\x30\x46\x44\x39\x42\x0d"
 
     @property
     def command_serial_nr(self):
-        return b"\x7E\x32\x35\x30\x30\x34\x36\x43\x32\x30\x30\x30\x30\x46\x44\x39\x41\x0D"
+        return b"\x7e\x32\x35\x30\x30\x34\x36\x43\x32\x30\x30\x30\x30\x46\x44\x39\x41\x0d"
 
     @property
     def command_fuses(self):  # warn information
-        return b"\x7E\x32\x35\x30\x30\x34\x36\x34\x34\x45\x30\x30\x32\x30\x31\x46\x44\x32\x46\x0D"
+        return b"\x7e\x32\x35\x30\x30\x34\x36\x34\x34\x45\x30\x30\x32\x30\x31\x46\x44\x32\x46\x0d"
 
     def test_connection(self):
         # call a function that will connect to the battery, send a command and retrieve the result.
@@ -80,9 +79,6 @@ class Pace(Battery):
 
         # capacity
         self.capacity_remain = int(status_data[117:121], 16) / 100
-
-        self.max_battery_voltage = utils.MAX_CELL_VOLTAGE * self.cell_count
-        self.min_battery_voltage = utils.MIN_CELL_VOLTAGE * self.cell_count
 
         # ######################### SOFTWARE VERSION #############################
         logger.debug("requesting software version")
@@ -364,7 +360,7 @@ class Pace(Battery):
         temperature_sensor_count = int(status_data[83:85], 16)
         logger.debug("Temp sensor count: " + str(temperature_sensor_count))
         for i in range(0, temperature_sensor_count):
-            v = int(status_data[85 + i * 4 : 85 + i * 4 + 4], 16) / 100
+            v = round((int(status_data[85 + i * 4 : 85 + i * 4 + 4], 16) / 10) - 273, 1)
             logger.debug("Temperature [" + str(i) + "]: " + str(v))
             if i < 4:  # 0,1,2,3 are internal temps
                 self.to_temperature(i + 1, v)
@@ -444,6 +440,7 @@ class Pace(Battery):
             self.LENGTH_CHECK,  # ignored
             length,
             self.LENGTH_SIZE,  # ignored
+            battery_online=self.online,
         )
         if data is False:
             return False

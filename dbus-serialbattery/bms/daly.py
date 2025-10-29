@@ -6,6 +6,7 @@
 from battery import Battery, Cell
 from utils import (
     bytearray_to_string,
+    get_connection_error_message,
     open_serial_port,
     logger,
     AUTO_RESET_SOC,
@@ -50,7 +51,7 @@ class Daly(Battery):
     # command bytes [StartFlag=A5][Address=40][Command=94][DataLength=8][8x fill bytes][checksum]
     # use 0xAA (or 0x55) as fill bytes to allow the daly's "weak" uart to sync better
     # this reduces read errors dramatically
-    command_base = b"\xA5\x40\x94\x08\xAA\xAA\xAA\xAA\xAA\xAA\xAA\xAA\x00"
+    command_base = b"\xa5\x40\x94\x08\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\x00"
     command_set_soc = b"\x21"
     command_rated_params = b"\x50"
     command_batt_details = b"\x53"
@@ -64,8 +65,8 @@ class Daly(Battery):
     command_temperature = b"\x96"
     command_cell_balance = b"\x97"  # no reply
     command_alarm = b"\x98"  # no reply
-    command_disable_discharge_mos = b"\xD9"
-    command_disable_charge_mos = b"\xDA"
+    command_disable_discharge_mos = b"\xd9"
+    command_disable_charge_mos = b"\xda"
 
     BATTERYTYPE = "Daly"
     LENGTH_CHECK = 1
@@ -102,7 +103,7 @@ class Daly(Battery):
 
         # give the user a feedback that no BMS was found
         if not result:
-            logger.error(">>> ERROR: No reply - returning")
+            get_connection_error_message(self.online)
 
         return result
 
@@ -179,32 +180,37 @@ class Daly(Battery):
         self.last_charge_mode = self.charge_mode
 
     def read_status_data(self, ser):
-        status_data = self.request_data(ser, self.command_status)
-        # check if connection success
-        if status_data is False:
-            logger.debug("No data received in read_status_data()")
-            return False
+        read_tries = 1
 
-        try:
-            (
-                cell_count,
-                temperature_sensors,
-                self.charger_connected,
-                self.load_connected,
-                state,
-                self.history.charge_cycles,
-            ) = unpack_from(">bb??bhx", status_data)
-        except Exception:
-            return False
+        # try to read data 3 times
+        while read_tries <= 3:
+            read_tries += 1
+            status_data = self.request_data(ser, self.command_status)
+            # check if connection success
+            if status_data is False:
+                logger.debug("No data received in read_status_data()")
+                continue
 
-        if cell_count > 0:
-            self.cell_count = cell_count
+            try:
+                (
+                    cell_count,
+                    temperature_sensors,
+                    self.charger_connected,
+                    self.load_connected,
+                    state,
+                    self.history.charge_cycles,
+                ) = unpack_from(">bb??bhx", status_data)
+            except Exception:
+                return False
 
-            self.hardware_version = "DalyBMS " + str(self.cell_count) + "S" + (" (" + self.production + ")" if self.production else "")
+            if cell_count > 0:
+                self.cell_count = cell_count
 
-            logger.debug(self.hardware_version)
+                self.hardware_version = "DalyBMS " + str(self.cell_count) + "S" + (" (" + self.production + ")" if self.production else "")
 
-            return True
+                logger.debug(self.hardware_version)
+
+                return True
 
         return False
 
@@ -514,29 +520,34 @@ class Daly(Battery):
         return True
 
     def read_battery_code(self, ser):
-        data = self.request_data(ser, self.command_batt_code, sentences_to_receive=5)
+        read_tries = 1
 
-        if data is False:
-            logger.debug("No data received in read_battery_code()")
-            return False
+        # try to read data 3 times
+        while read_tries <= 3:
+            read_tries += 1
+            data = self.request_data(ser, self.command_batt_code, sentences_to_receive=5)
 
-        battery_code = ""
-        # logger.warning("data " + bytearray_to_string(cells_volts_data))
+            if data is False:
+                logger.debug("No data received in read_battery_code()")
+                continue
 
-        for i in range(5):
-            nr, part = unpack_from(">B7s", data, i * 8)
+            battery_code = ""
+            # logger.warning("data " + bytearray_to_string(cells_volts_data))
 
-            if nr != i + 1:
-                logger.debug("bad battery code index")  # use string anyhow, just warn
+            for i in range(5):
+                nr, part = unpack_from(">B7s", data, i * 8)
 
-            battery_code += part.decode("utf-8")
+                if nr != i + 1:
+                    logger.debug("bad battery code index")  # use string anyhow, just warn
 
-        if battery_code != "":
-            self.custom_field = sub(
-                " +",
-                " ",
-                (battery_code.replace("\x00", " ").strip()),
-            )
+                battery_code += part.decode("utf-8")
+
+            if battery_code != "":
+                self.custom_field = sub(
+                    " +",
+                    " ",
+                    (battery_code.replace("\x00", " ").strip()),
+                )
 
         return True
 
@@ -676,7 +687,7 @@ class Daly(Battery):
 
     def generate_command(self, command):
         buffer = bytearray(self.command_base)
-        buffer[1] = self.address[0]  # Always serial 40 or 80
+        buffer[1] = self.address[0]  # default: Board No 1 = 0x40; Board No 2 = 0x41, ....
         buffer[2] = command[0]
         buffer[12] = sum(buffer[:12]) & 0xFF  # checksum calc
         return buffer
@@ -709,12 +720,16 @@ class Daly(Battery):
         """
         time_start = time()
 
-        reply = ser.read_until(b"\xA5")
-        if not reply or b"\xA5" not in reply:
+        try:
+            reply = ser.read_until(b"\xa5")
+        except Exception:
+            return False
+
+        if not reply or b"\xa5" not in reply:
             logger.debug(f"read_sentence {bytearray_to_string(expected_reply)}: no sentence start received")
             return False
 
-        idx = reply.index(b"\xA5")
+        idx = reply.index(b"\xa5")
         reply = reply[idx:]
         toread = ser.inWaiting()
         while toread < 12:

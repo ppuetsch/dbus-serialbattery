@@ -11,7 +11,7 @@
 
 from __future__ import absolute_import, division, print_function, unicode_literals
 from battery import Battery, Cell
-from utils import bytearray_to_string, logger
+from utils import bytearray_to_string, get_connection_error_message, logger
 from struct import unpack_from
 from time import sleep, time
 import sys
@@ -186,7 +186,8 @@ class Jkbms_Can(Battery):
 
     def read_jkbms_can(self):
         # reset errors after timeout
-        if ((time() - self.last_error_time) > 120.0) and self.error_active is True:
+        # timeout is 300 seconds, to prevent notification spam
+        if ((int(time()) - self.last_error_time) > 300) and self.error_active is True:
             self.error_active = False
             self.reset_protection_bits()
 
@@ -194,7 +195,7 @@ class Jkbms_Can(Battery):
         data_check = 0
 
         for frame_id, data in self.can_transport_interface.can_message_cache_callback().items():
-            normalized_arbitration_id = frame_id + self.device_address
+            normalized_arbitration_id = frame_id - self.device_address
 
             # Frame is send every 20ms
             if normalized_arbitration_id in self.CAN_FRAMES[self.BATT_STAT]:
@@ -342,7 +343,7 @@ class Jkbms_Can(Battery):
         # sum of all data checks except for alarms
         logger.debug("Data check: %d" % (data_check))
         if data_check == 0:
-            logger.error(">>> ERROR: No reply - returning")
+            get_connection_error_message(self.online)
             return False
 
         # check if all needed data is available, else wait shortly and proceed with next iteration
