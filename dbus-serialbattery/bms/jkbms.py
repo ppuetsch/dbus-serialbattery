@@ -31,9 +31,9 @@ class Jkbms(Battery):
     command_status = b"\x4E\x57\x00\x13\x00\x00\x00\x00\x06\x03\x00\x00\x00\x00\x00\x00\x68\x00\x00\x01\x29"
     homeassistant_token: str = utils.HOMEASSISTANT_TOKEN
     homeassistantBaseUrl: str = utils.HOMEASSISTANT_BASE_URL
-    is_pv_battery_charge_enabled_entity_id=utils.IS_PV_BATTERY_CHARGE_ENABLED_ENTITY_ID
+    max_allowed_charge_current_entity_id = utils.MAX_ALLOWED_BATTERY_CHARGE_CURRENT_ENTITY_ID
     is_pv_battery_discharge_enabled_entity_id=utils.IS_PV_BATTERY_DISCHARGE_ENABLED_ENTITY_ID
-    is_pv_battery_charge_enabled=True
+    ha_max_charge_current=210
     is_pv_battery_discharge_enabled=True
 
     def get_default_homeassistant_headers(self)->dict:
@@ -48,11 +48,11 @@ class Jkbms(Battery):
         response = requests.get(url, headers = self.get_default_homeassistant_headers())
         return response.json()["state"]
 
-    def update_is_pv_battery_charge_enabled(self):
+    def update_ha_max_charge_current(self):
         try:
-            self.is_pv_battery_charge_enabled = self.get_homeassistant_state(self.is_pv_battery_charge_enabled_entity_id) == "on"
+            self.ha_max_charge_current = float(self.get_homeassistant_state(self.max_allowed_charge_current_entity_id))
         except Exception as err:
-            logger.error(f"Unexpected error in is_pv_battery_charge_enabled",err)
+            logger.error(f"Unexpected error in update_ha_max_charge_current",err)
 
 
     def update_is_pv_battery_discharge_enabled(self):
@@ -125,7 +125,7 @@ class Jkbms(Battery):
         return bytes[start + 1 : start + length + 1]
 
     def read_status_data(self):
-        self.update_is_pv_battery_charge_enabled()
+        self.update_ha_max_charge_current()
         self.update_is_pv_battery_discharge_enabled()
         status_data = self.read_serial_data_jkbms(self.command_status)
         # check if connection success
@@ -186,8 +186,7 @@ class Jkbms(Battery):
         max_battery_discharge_current = float(unpack_from(">H", self.get_data(status_data, b"\x97", offset, 2))[0])
         # check if the max discharge current is valid
         if self.is_pv_battery_discharge_enabled:
-            if max_battery_discharge_current >= 0:
-                self.max_battery_discharge_current = max_battery_discharge_current
+                self.max_battery_discharge_current = utils.MAX_BATTERY_DISCHARGE_CURRENT
         else:
             self.max_battery_discharge_current = 0
 
@@ -195,11 +194,7 @@ class Jkbms(Battery):
         offset = cellbyte_count + 72
         max_battery_charge_current = float(unpack_from(">H", self.get_data(status_data, b"\x99", offset, 2))[0])
         # check if the max charge current is valid
-        if self.is_pv_battery_charge_enabled:
-            if max_battery_charge_current >= 0:
-                self.max_battery_charge_current = max_battery_charge_current
-        else:
-            self.max_battery_charge_current = 0
+        self.max_battery_charge_current = min(self.ha_max_charge_current, utils.MAX_BATTERY_CHARGE_CURRENT)
 
             # the JKBMS resets to
         # 95% SoC, if all cell voltages are above or equal to OVPR (Over Voltage Protection Recovery)
