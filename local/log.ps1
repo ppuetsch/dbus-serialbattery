@@ -1,1 +1,1 @@
-ssh root@192.168.2.112 "tail -f /var/log/dbus-serialbattery.ttyUSB0/current | tai64nlocal"
+ssh root@192.168.1.11 "tail -f /var/log/dbus-serialbattery.ttyUSB1/current | tai64nlocal"
