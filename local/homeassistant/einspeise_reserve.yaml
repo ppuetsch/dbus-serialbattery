@@ -1,0 +1,94 @@
+input_boolean:
+  einspeise_reserve_aktiv:
+    name: Einspeise-Reserve aktiv
+    icon: mdi:solar-power
+
+input_number:
+  einspeise_reserve_w:
+    name: Einspeise-Reserve
+    min: 0
+    max: 5000
+    step: 50
+    unit_of_measurement: W
+    mode: box
+    icon: mdi:transmission-tower-export
+  einspeise_reserve_max_ladeleistung_w:
+    name: Einspeise-Reserve maximale Ladeleistung
+    min: 0
+    max: 5000
+    step: 50
+    unit_of_measurement: W
+    mode: box
+  einspeise_reserve_max_anstieg_w:
+    name: Einspeise-Reserve maximaler Anstieg je Durchlauf
+    min: 50
+    max: 2000
+    step: 50
+    unit_of_measurement: W
+    mode: box
+  einspeise_reserve_ladelimit_w:
+    name: Einspeise-Reserve berechnetes Ladelimit
+    min: 0
+    max: 5000
+    step: 1
+    unit_of_measurement: W
+    mode: box
+
+automation:
+  - id: einspeise_reserve_ladelimit_regeln
+    alias: Einspeise-Reserve Ladelimit regeln
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        seconds: "/10"
+    variables:
+      netz_sensor: sensor.ehz_zaehler_sml_power_curr
+      batterieleistung_sensor: sensor.gx_device_dc_batterie_leistung
+      ladeleistung_limit_entity: number.gx_device_ess_maximale_ladeleistung
+      anstiegs_faktor: 0.5
+      schreib_totband_w: 100
+      messwerte_gueltig: "{{ is_number(states(netz_sensor)) and is_number(states(batterieleistung_sensor)) }}"
+      einspeisung_w: "{{ (states(netz_sensor) | float(0)) * -1 }}"
+      ladeleistung_w: "{{ [states(batterieleistung_sensor) | float(0), 0] | max }}"
+      ueberschuss_w: "{{ einspeisung_w - states('input_number.einspeise_reserve_w') | float(0) }}"
+      max_anstieg_w: "{{ states('input_number.einspeise_reserve_max_anstieg_w') | float(0) }}"
+      anstieg_w: "{{ [ueberschuss_w * anstiegs_faktor, max_anstieg_w] | min }}"
+      aenderung_w: "{{ anstieg_w if ueberschuss_w > 0 else ueberschuss_w }}"
+      max_ladeleistung_w: "{{ states('input_number.einspeise_reserve_max_ladeleistung_w') | float(0) }}"
+      gewuenschtes_limit_w: >-
+        {{ ([[ladeleistung_w + aenderung_w, 0] | max, max_ladeleistung_w] | min / 50) | round(0) * 50
+           if messwerte_gueltig else 0 }}
+      eingestelltes_limit_w: "{{ states(ladeleistung_limit_entity) | float(-1) }}"
+      limit_weicht_ab: >-
+        {{ (gewuenschtes_limit_w - eingestelltes_limit_w) | abs >= schreib_totband_w
+           or (gewuenschtes_limit_w == 0) != (eingestelltes_limit_w == 0) }}
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.einspeise_reserve_ladelimit_w
+        data:
+          value: "{{ gewuenschtes_limit_w }}"
+      - condition: state
+        entity_id: input_boolean.einspeise_reserve_aktiv
+        state: "on"
+      - condition: template
+        value_template: "{{ limit_weicht_ab }}"
+      - action: number.set_value
+        target:
+          entity_id: "{{ ladeleistung_limit_entity }}"
+        data:
+          value: "{{ gewuenschtes_limit_w }}"
+
+  - id: einspeise_reserve_ladelimit_freigeben
+    alias: Einspeise-Reserve Ladelimit freigeben
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.einspeise_reserve_aktiv
+        to: "off"
+    actions:
+      - action: number.set_value
+        target:
+          entity_id: number.gx_device_ess_maximale_ladeleistung
+        data:
+          value: -1
