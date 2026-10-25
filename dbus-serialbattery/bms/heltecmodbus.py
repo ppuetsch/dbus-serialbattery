@@ -8,7 +8,7 @@
 
 
 from battery import Battery, Cell
-from utils import get_connection_error_message, logger
+from utils import SOC_CALCULATION, get_connection_error_message, logger, wrap_modbus_capture
 import serial
 import time
 import ext.minimalmodbus as minimalmodbus
@@ -59,6 +59,7 @@ class HeltecModbus(Battery):
             mbdev.serial.baudrate = 9600
             # yes, 400ms is long but the BMS is sometimes really slow in responding, so this is a good compromise
             mbdev.serial.timeout = 0.4
+            wrap_modbus_capture(mbdev, self.port)
             mbdevs[self.address] = mbdev
 
             for n in range(1, RETRYCNT):
@@ -284,10 +285,11 @@ class HeltecModbus(Battery):
                     else:
                         self.protection.high_internal_temperature = 0
 
-                    if warnings & (1 << 14):  # SOC low
-                        self.protection.low_soc = 2
-                    else:
-                        self.protection.low_soc = 0
+                    if not SOC_CALCULATION:
+                        if warnings & (1 << 14):  # SOC low
+                            self.protection.low_soc = 2
+                        else:
+                            self.protection.low_soc = 0
 
                     if warnings & (0xFFFF0000):  # any other fault
                         self.protection.internal_failure = 2

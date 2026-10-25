@@ -12,7 +12,7 @@
 
 # avoid importing wildcards, remove unused imports
 from battery import Battery, Cell
-from utils import open_serial_port, get_connection_error_message, logger
+from utils import SOC_CALCULATION, open_serial_port, get_connection_error_message, logger, capture_raw_data
 from time import sleep
 from struct import unpack
 from re import findall
@@ -150,6 +150,7 @@ class KS48100(Battery):
         ser.flushOutput()
         ser.flushInput()
         ser.write(req.encode())
+        capture_raw_data(ser.port, "tx", req)
         logger.info("probe sent: {}".format(req))
 
         sleep(0.8)  # Allow the BMS some time to send a full response
@@ -185,6 +186,7 @@ class KS48100(Battery):
         ser.flushOutput()
         ser.flushInput()
         ser.write(req.encode())
+        capture_raw_data(ser.port, "tx", req)
         logger.debug("get_mfg_params request sent: {}".format(req))
 
         sleep(1.0)  # Allow the BMS some time to send a full response
@@ -221,6 +223,7 @@ class KS48100(Battery):
         ser.flushOutput()
         ser.flushInput()
         ser.write(req.encode())
+        capture_raw_data(ser.port, "tx", req)
         logger.debug("get_cap_params request sent: {}".format(req))
 
         sleep(0.4)  # Allow the BMS some time to send a full response
@@ -237,8 +240,8 @@ class KS48100(Battery):
                 self.total_charge_capacity = int(payload[12:20], base=16) / 1
                 # total_discharge_capacity
                 self.history.total_ah_drawn = int(payload[20:28], base=16)
-                self.history.charged_energy = int(int(payload[28:32], base=16) / 10)
-                self.history.discharged_energy = int(int(payload[32:36], base=16) / 10)
+                self.history.charged_energy = int(int(payload[28:32], base=16) / 100)
+                self.history.discharged_energy = int(int(payload[32:36], base=16) / 100)
 
                 result = True
             else:
@@ -261,6 +264,7 @@ class KS48100(Battery):
         ser.flushOutput()
         ser.flushInput()
         ser.write(req.encode())
+        capture_raw_data(ser.port, "tx", req)
         logger.debug("get_realtime_data request sent: {}".format(req))
 
         sleep(3.0)  # Allow the BMS some time to send a full response
@@ -271,6 +275,7 @@ class KS48100(Battery):
             payload = response[13 : len(response) - 5]
             if len(payload) >= 152:
                 self.soc = int(payload[2:6], base=16) / 100
+                self.soh = int(payload[114:118], base=16) / 1
                 self.voltage = int(payload[6:10], base=16) / 100
                 self.current = unpack(">h", bytes.fromhex(payload[106:110]))[0] / 100
                 temperature_mos = unpack(">h", bytes.fromhex(payload[84:88]))[0] / 10
@@ -323,10 +328,11 @@ class KS48100(Battery):
                     self.protection.low_cell_voltage = 0
 
                 # check bit 7 for low_BAT_alarm from warningstatus
-                if warningstatus & (1 << 7):
-                    self.protection.low_soc = 2
-                else:
-                    self.protection.low_soc = 0
+                if not SOC_CALCULATION:
+                    if warningstatus & (1 << 7):
+                        self.protection.low_soc = 2
+                    else:
+                        self.protection.low_soc = 0
 
                 # check bit 2 for CHG_OC_PROT
                 if currentstatus & (1 << 2):
@@ -451,6 +457,7 @@ class KS48100(Battery):
         ser.flushOutput()
         ser.flushInput()
         ser.write(req.encode())
+        capture_raw_data(ser.port, "tx", req)
         logger.debug("get_manufacturer_info request sent: {}".format(req))
 
         sleep(0.4)  # Allow the BMS some time to send a full response
@@ -499,6 +506,7 @@ class KS48100(Battery):
         ser.flushOutput()
         ser.flushInput()
         ser.write(req.encode())
+        capture_raw_data(ser.port, "tx", req)
         logger.debug("get_cells_params request sent: {}".format(req))
 
         sleep(0.4)  # Allow the BMS some time to send a full response
@@ -560,6 +568,8 @@ class KS48100(Battery):
                 # This can happen on this slower board - we assume the next poll will get valid data/complete message
                 logger.debug("Exception during inWaiting(): {}".format(e))
                 pass
+
+        capture_raw_data(ser.port, "rx", buff)
 
         try:
             CID2 = buff[7:9]

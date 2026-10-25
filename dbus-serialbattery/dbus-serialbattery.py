@@ -9,7 +9,7 @@ from time import sleep
 from typing import Union
 
 from dbus.mainloop.glib import DBusGMainLoop
-from gi.repository import GLib as gobject
+from gi.repository import GLib
 
 from battery import Battery
 from dbushelper import DbusHelper
@@ -22,12 +22,16 @@ from utils import (
     EXTERNAL_SENSOR_DBUS_DEVICE,
     EXTERNAL_SENSOR_DBUS_PATH_CURRENT,
     EXTERNAL_SENSOR_DBUS_PATH_SOC,
+    get_bms_detection_cache_key,
     get_venus_os_version,
     get_venus_os_image_type,
     get_venus_os_device_type,
+    load_bms_detection_cache,
     logger,
     POLL_INTERVAL,
+    save_bms_detection_cache,
     validate_config_values,
+    CAPTURE_RAW_DATA,
 )
 
 # import battery classes
@@ -44,6 +48,7 @@ from bms.jkbms import Jkbms
 from bms.jkbms_pb import Jkbms_pb
 from bms.ks48100 import KS48100
 from bms.lltjbd import LltJbd
+from bms.lltjbd_up16s import LltJbd_Up16s
 from bms.pace import Pace
 from bms.renogy import Renogy
 from bms.seplos import Seplos
@@ -61,25 +66,29 @@ if "Sinowealth" in BMS_TYPE:
     from bms.sinowealth import Sinowealth
 
 supported_bms_types = [
+    # group of most popular BMS types are tried first
+    {"bms": Jkbms, "baud": 115200},
+    {"bms": Jkbms_pb, "baud": 115200, "address": b"\x01"},
+    {"bms": LltJbd, "baud": 9600, "address": b"\x00"},
+    {"bms": LltJbd_Up16s, "baud": 9600, "address": b"\x01"},
     {"bms": Daly, "baud": 9600, "address": b"\x40"},
     {"bms": Daly, "baud": 9600, "address": b"\x80"},
+    # group of less popular BMS types are tried afterwards
     {"bms": Daren485, "baud": 9600, "address": b"\x01"},
     {"bms": Daren485, "baud": 19200, "address": b"\x01"},
     {"bms": Ecs, "baud": 19200},
     {"bms": EG4_Lifepower, "baud": 9600, "address": b"\x01"},
-    {"bms": EG4_LL, "baud": 9600, "address": b"\x01"},
     {"bms": Felicity, "baud": 9600, "address": b"\x01"},
     {"bms": HeltecModbus, "baud": 9600, "address": b"\x01"},
     {"bms": HLPdataBMS4S, "baud": 9600},
-    {"bms": Jkbms, "baud": 115200},
-    {"bms": Jkbms_pb, "baud": 115200, "address": b"\x01"},
     {"bms": KS48100, "baud": 9600, "address": b"\x01"},
-    {"bms": LltJbd, "baud": 9600, "address": b"\x00"},
     {"bms": Pace, "baud": 9600, "address": b"\x00"},
     {"bms": Renogy, "baud": 9600, "address": b"\x30"},
     {"bms": Renogy, "baud": 9600, "address": b"\xf7"},
     {"bms": Seplos, "baud": 19200, "address": b"\x00"},
     {"bms": Seplosv3, "baud": 19200},
+    # moved as last because of long recognition timeouts
+    {"bms": EG4_LL, "baud": 9600, "address": b"\x01"},
 ]
 
 # enabled only if explicitly set in config under "BMS_TYPE"
@@ -94,6 +103,17 @@ expected_bms_types = [battery_type for battery_type in supported_bms_types if ba
 
 logger.info("")
 logger.info("Starting dbus-serialbattery")
+
+if CAPTURE_RAW_DATA:
+    logger.warning("")
+    logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    logger.warning("!!! BMS_CAPTURE_RAW_DATA is enabled                   !!!")
+    logger.warning("!!! raw and decoded BMS data is being logged to disk. !!!")
+    logger.warning("!!! This is recommended only while troubleshooting    !!!")
+    logger.warning("!!! disable it again afterwards to avoid unnecessary  !!!")
+    logger.warning("!!! flash wear and disk usage.                        !!!")
+    logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    logger.warning("")
 
 
 # count loops
@@ -119,10 +139,12 @@ def main():
         if "mainloop" in globals() and mainloop is not None:
             mainloop.quit()
 
-        # For BLE connections, disconnect from the BLE device
-        if port.endswith("_Ble"):
-            if battery and len(battery) > 0 and hasattr(battery[0], "disconnect") and callable(battery[0].disconnect):
-                battery[0].disconnect()
+        # For BLE and AIOBMSBLE connections, disconnect from the BLE device
+        # Else it's very likely that the next connection attempt fails
+        if port.endswith("_Ble") or port.lower().startswith("aiobmsble_"):
+            for key_address in battery:
+                if hasattr(battery[key_address], "disconnect") and callable(battery[key_address].disconnect):
+                    battery[key_address].disconnect()
 
         # Stop the CanReceiverThread
         elif port.startswith(("can", "vecan", "vcan")):
@@ -131,8 +153,7 @@ def main():
 
         # Close the serial connection
         else:
-            # Currently not feasible to close the serial connection
-            # TODO: Is it worth implementing this?
+            # Serial connection is automatically closed when driver exits
             pass
 
         logger.info(f"Stopped dbus-serialbattery with exit code {code}")
@@ -160,14 +181,21 @@ def main():
             helper[key_address].publish_battery(loop)
 
         runtime = (datetime.now() - start).total_seconds()
-        logger.debug(f"Polling data took {runtime:.3f} seconds")
+
+        # Use the sum of individual refresh_data times (serial I/O + calc) for
+        # interval decisions, not the full runtime which includes dbus overhead.
+        # Dbus write time is unpredictable (reentrancy from incoming requests)
+        # and should not cause the poll interval to increase silently.
+        refresh_runtime = sum(getattr(battery[k], "last_refresh_duration", 0) for k in battery)
+        logger.debug(f"Polling data took {runtime:.3f} seconds (refresh: {refresh_runtime:.3f})")
 
         # check if polling took too long and adjust poll interval, but only after 5 loops
         # since the first polls are always slower
-        if runtime > battery[first_key].poll_interval / 1000:
+        if refresh_runtime > battery[first_key].poll_interval / 1000:
             delayed_loop_count += 1
             if delayed_loop_count > 1:
-                logger.warning(f"Polling data took {runtime:.3f} seconds. Automatically increase interval in {count_for_loops - delayed_loop_count} cycles.")
+                remaining = count_for_loops - delayed_loop_count
+                logger.warning(f"Polling took {runtime:.3f}s (refresh {refresh_runtime:.3f}s). Increase in {remaining} cycles.")
         else:
             delayed_loop_count = 0
 
@@ -186,14 +214,102 @@ def main():
 
         return True
 
+    def health_check_battery(loop) -> bool:
+        """
+        Health check for the battery connection.
+        Currently not implemented.
+
+        :param loop: The main event loop
+        :return: Always returns True
+        """
+        for key_address in battery:
+            logger.debug(f"Health checking battery connection for address {key_address}")
+            # requires that battery class: refresh_data() handles connection issues internally
+            helper[key_address].publish_battery(loop)
+
+        return True
+
     def get_battery(_port: str, _bus_address: hex = None, can_transport_interface: object = None) -> Union[Battery, None]:
         """
         Attempts to establish a connection to the battery and returns the battery object if successful.
+
+        The BMS type that was last detected on this port (and bus address, if any) is tried
+        first, since it's cached to disk. Only if that fails 3 times does this fall back to
+        the full auto detection scan across all supported BMS types.
 
         :param _port: The port to connect to.
         :param _bus_address: The Modbus/CAN address to connect to (optional).
         :return: The battery object if a connection is established, otherwise None.
         """
+
+        def try_test(test: dict) -> Union[Battery, None]:
+            """
+            Instantiate a single BMS type/address/baud combination and run its connection test.
+
+            :param test: Entry from supported_bms_types/expected_bms_types
+            :return: The battery object if the connection test succeeds, otherwise None
+            """
+            # noinspection PyBroadException
+            try:
+                if _bus_address is not None:
+                    # Convert hex string to bytes
+                    _bms_address = bytes.fromhex(_bus_address.replace("0x", ""))
+                elif "address" in test:
+                    _bms_address = test["address"]
+                else:
+                    _bms_address = None
+
+                logger.info(
+                    "  Testing "
+                    + test["bms"].__name__
+                    + (' at address "' + bytearray_to_string(_bms_address) + '"' if _bms_address is not None else "")
+                    + (" with " + str(test["baud"]) + " baud" if "baud" in test else "")
+                )
+                batteryClass = test["bms"]
+                baud = test["baud"] if "baud" in test else None
+                battery: Battery = batteryClass(port=_port, baud=baud, address=_bms_address)
+                battery.set_can_transport_interface(can_transport_interface)
+                if battery.test_connection() and battery.validate_data():
+                    logger.info("-- Connection established to " + battery.__class__.__name__)
+                    return battery
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                (
+                    exception_type,
+                    exception_object,
+                    exception_traceback,
+                ) = sys.exc_info()
+                file = exception_traceback.tb_frame.f_code.co_filename
+                line = exception_traceback.tb_lineno
+                logger.error("Non blocking exception occurred: " + f"{repr(exception_object)} of type {exception_type} in {file} line #{line}")
+                # Ignore any malfunction test_function()
+            return None
+
+        bms_detection_cache = load_bms_detection_cache()
+        cache_key = get_bms_detection_cache_key(_port, bytes.fromhex(_bus_address.replace("0x", "")) if _bus_address is not None else None)
+        cached_bms_name = bms_detection_cache.get(cache_key)
+
+        # Try the BMS type that was found on this port/address last time first. This is a lot
+        # faster than the full scan below, especially for BMS types that are slow to recognize.
+        if cached_bms_name:
+            cached_tests = [test for test in expected_bms_types if test["bms"].__name__ == cached_bms_name]
+            if cached_tests:
+                logger.info(f"-- Found cached BMS type '{cached_bms_name}' for {_port}, trying it first")
+                for retry in range(1, 4):
+                    logger.info(f"-- Testing cached BMS type '{cached_bms_name}': {retry} of 3 rounds")
+                    for test in cached_tests:
+                        try:
+                            battery = try_test(test)
+                        except KeyboardInterrupt:
+                            return None
+                        if battery:
+                            bms_detection_cache[cache_key] = battery.__class__.__name__
+                            save_bms_detection_cache(bms_detection_cache)
+                            return battery
+                    sleep(0.5)
+                logger.info(f"-- Cached BMS type '{cached_bms_name}' not found on {_port}, falling back to auto detection")
+
         # Try to establish communications with the battery 3 times, else exit
         retry = 1
         retries = 3
@@ -204,42 +320,14 @@ def main():
             logger.info("-- Testing BMS: " + str(retry) + " of " + str(retries) + " rounds")
             # Create a new battery object that can read the battery and run connection test
             for test in expected_bms_types:
-                # noinspection PyBroadException
                 try:
-                    if _bus_address is not None:
-                        # Convert hex string to bytes
-                        _bms_address = bytes.fromhex(_bus_address.replace("0x", ""))
-                    elif "address" in test:
-                        _bms_address = test["address"]
-                    else:
-                        _bms_address = None
-
-                    logger.info(
-                        "  Testing "
-                        + test["bms"].__name__
-                        + (' at address "' + bytearray_to_string(_bms_address) + '"' if _bms_address is not None else "")
-                        + (" with " + str(test["baud"]) + " baud" if "baud" in test else "")
-                    )
-                    batteryClass = test["bms"]
-                    baud = test["baud"] if "baud" in test else None
-                    battery: Battery = batteryClass(port=_port, baud=baud, address=_bms_address)
-                    battery.set_can_transport_interface(can_transport_interface)
-                    if battery.test_connection() and battery.validate_data():
-                        logger.info("-- Connection established to " + battery.__class__.__name__)
-                        return battery
+                    battery = try_test(test)
                 except KeyboardInterrupt:
                     return None
-                except Exception:
-                    (
-                        exception_type,
-                        exception_object,
-                        exception_traceback,
-                    ) = sys.exc_info()
-                    file = exception_traceback.tb_frame.f_code.co_filename
-                    line = exception_traceback.tb_lineno
-                    logger.error("Non blocking exception occurred: " + f"{repr(exception_object)} of type {exception_type} in {file} line #{line}")
-                    # Ignore any malfunction test_function()
-                    pass
+                if battery:
+                    bms_detection_cache[cache_key] = battery.__class__.__name__
+                    save_bms_detection_cache(bms_detection_cache)
+                    return battery
             retry += 1
             sleep(0.5)
 
@@ -256,17 +344,17 @@ def main():
             if port not in EXCLUDED_DEVICES:
                 return port
             else:
-                logger.debug("Stopping dbus-serialbattery: " + str(port) + " is excluded through the config file")
-                sleep(60)
-                # Exit with error so that the serialstarter continues
-                exit_driver(None, None, 1)
+                logger.info("Stopped dbus-serialbattery: " + str(port) + " is excluded by the config file")
+                # exit so that the serialstarter continues
+                # info only: dbus-gps and vedirect exits with code 129
+                sys.exit(0)
+
         elif "MNB" in BMS_TYPE:
             # Special case for MNB-SPI
             logger.info("No Port needed")
             return "/dev/ttyUSB9"
         else:
             logger.error(">>> No port specified in the command line arguments")
-            sleep(60)
             exit_driver(None, None, 1)
 
     def check_bms_types(supported_bms_types, type) -> None:
@@ -317,7 +405,6 @@ def main():
 
         if len(sys.argv) <= 2:
             logger.error(">>> Bluetooth address is missing in the command line arguments")
-            sleep(60)
             exit_driver(None, None, 1)
         else:
             ble_address = sys.argv[2]
@@ -338,9 +425,13 @@ def main():
                 # noqa: F401 --> ignore flake "imported but unused" error
                 from bms.lltjbd_ble import LltJbd_Ble  # noqa: F401
 
+            elif port == "Xdzn_Ble":
+                # noqa: F401 --> ignore flake "imported but unused" error
+                from bms.xdzn_ble import Xdzn_Ble  # noqa: F401
+
             else:
                 logger.error(">>> Unknown Bluetooth BMS type: " + port)
-                logger.error("Supported Bluetooth BMS types (CASE SENSITIVE!): Jkbms_Ble, Kilovault_Ble, LiTime_Ble, LltJbd_Ble")
+                logger.error("Supported Bluetooth BMS types (CASE SENSITIVE!): Jkbms_Ble, Kilovault_Ble, LiTime_Ble, LltJbd_Ble, Xdzn_Ble")
                 sleep(60)
                 exit_driver(None, None, 1)
 
@@ -352,6 +443,29 @@ def main():
             if testbms.test_connection():
                 logger.info("-- Connection established to " + testbms.__class__.__name__)
                 battery[0] = testbms
+
+    # BLUETOOTH AIOBMSBLE
+    # https://github.com/patman15/aiobmsble
+    elif port.lower().startswith("aiobmsble_"):
+        """
+        Import BLE classes only if it's a BLE port; otherwise, the driver won't start due to missing Python modules.
+        This prevents issues when using the driver exclusively with a serial connection.
+        """
+
+        if len(sys.argv) <= 2:
+            logger.error(">>> Bluetooth address is missing in the command line arguments")
+            exit_driver(None, None, 1)
+        else:
+            from bms.generic_aiobmsble import Generic_AioBmsBle  # noqa: F401
+
+            ble_address = sys.argv[2]
+
+            # do not remove ble_ prefix, since the dbus service cannot be only numbers
+            testbms = Generic_AioBmsBle(port.replace("aiobmsble_", ""), None, ble_address)
+
+            if testbms.test_connection():
+                logger.info("-- Connection established to " + port)
+                battery[ble_address.replace(":", "").lower()] = testbms
 
     # CAN
     elif port.startswith(("can", "vecan", "vcan")):
@@ -365,6 +479,7 @@ def main():
         """
         from bms.daly_can import Daly_Can
         from bms.jkbms_can import Jkbms_Can
+        from bms.lltjbd_can import LltJbd_Can
         from bms.rv_c_can import RV_C_Can
         from bms.ubms_can import Ubms_Can
 
@@ -372,6 +487,7 @@ def main():
         supported_bms_types = [
             {"bms": Daly_Can},
             {"bms": Jkbms_Can},
+            {"bms": LltJbd_Can},
             {"bms": RV_C_Can},
             {"bms": Ubms_Can},
         ]
@@ -427,10 +543,48 @@ def main():
             can_thread.setup_can(channel=port, bitrate=busspeed, force=True)
             sleep(2)
 
+    # MQTT
+    elif port == "mqtt":
+        """
+        Import MQTT class only if it's a MQTT connection; otherwise, the driver won't start due to missing Python modules.
+        This prevents issues when using the driver exclusively with a serial connection.
+        """
+
+        if len(sys.argv) <= 2:
+            logger.error(">>> MQTT topic is missing in the command line arguments")
+            exit_driver(None, None, 1)
+        else:
+            from bms.generic_mqtt import Generic_Mqtt
+
+            # TODO: Currently only one topic is supported
+            mqtt_topic = sys.argv[2]
+
+            # Split mqtt topics by comma to allow multiple batteries
+            # TODO: implement multiple battery support
+            mqtt_topics = mqtt_topic.split(",")
+            logger.info("MQTT topics: " + ", ".join(mqtt_topics))
+
+            # do not remove mqtt_ prefix, since the dbus service cannot be only numbers
+            testbms = Generic_Mqtt("mqtt_0", None, mqtt_topics[0])
+
+            if testbms.test_connection():
+                logger.info("-- Connection established to " + testbms.__class__.__name__)
+                battery[0] = testbms
+
     # SERIAL
     else:
         # check if BMS_TYPE is not empty and all BMS types in the list are supported
         check_bms_types(supported_bms_types, "serial")
+
+        # check if serial port exists
+        if not os.path.exists(port):
+            logger.error(f">>> Serial port {port} does not exist")
+            exit_driver(None, None, 1)
+
+        # check if serial port is accessible
+        if not os.access(port, os.R_OK | os.W_OK):
+            logger.error(f">>> Serial port {port} is not accessible (no read/write permission)")
+            exit_driver(None, None, 1)
 
         # wait some seconds to be sure that the serial connection is ready
         # else the error throw a lot of timeouts
@@ -466,9 +620,7 @@ def main():
 
     # Have a mainloop, so we can send/receive asynchronous calls to and from dbus
     DBusGMainLoop(set_as_default=True)
-    if sys.version_info.major == 2:
-        gobject.threads_init()
-    mainloop = gobject.MainLoop()
+    mainloop = GLib.MainLoop()
 
     # Get the initial values for the battery used by setup_vedbus
     helper = {}
@@ -489,21 +641,25 @@ def main():
     # get first key from battery dict
     first_key = list(battery.keys())[0]
 
-    # try using active callback on this battery (normally only used for Bluetooth BMS)
-    if not battery[first_key].use_callback(lambda: poll_battery(mainloop)):
-        # change poll interval if set in config
+    # check if active callback is enabled for this battery
+    # normally used only for BLE and MQTT batteries
+    use_active_callback = battery[first_key].use_callback(lambda: poll_battery(mainloop))
+    if use_active_callback:
+        logger.info("Polling interval: active callback used")
+        # add a timeout to detect lost connections/callbacks (watchdog)
+        refresh_data_timeout = 5  # needs to be the same as in the battery class under refresh_data()
+        GLib.timeout_add(refresh_data_timeout * 1000, lambda: health_check_battery(mainloop))
+    else:
+        # set poll interval from config if provided
         if POLL_INTERVAL is not None:
             battery[first_key].poll_interval = POLL_INTERVAL
 
         logger.info(f"Polling interval: {battery[first_key].poll_interval/1000:.3f} s")
-
-        # if not possible, poll the battery every poll_interval milliseconds
-        gobject.timeout_add(
+        # schedule periodic polling
+        GLib.timeout_add(
             battery[first_key].poll_interval,
             lambda: poll_battery(mainloop),
         )
-    else:
-        logger.info("Polling interval: active callback used")
 
     # print log at this point, else not all data is correctly populated
     for key_address in battery:

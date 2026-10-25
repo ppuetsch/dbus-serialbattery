@@ -1,0 +1,12 @@
+[
+  {
+    "advertisement": {
+      "local_name": "BMS-SMART_708BFC",
+      "rssi": -78
+    },
+    "reason": "classic BT device",
+    "_comments": [
+      "source advmon (https://github.com/patman15/BMS_BLE-HA/issues/408)"
+    ]
+  }
+]

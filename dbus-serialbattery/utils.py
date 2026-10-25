@@ -2,19 +2,22 @@
 # Standard library imports
 import bisect
 import configparser
+import json
 import logging
+import logging.handlers
+import re
 import sys
 from pathlib import Path
-from struct import unpack_from
+from struct import Struct, unpack_from
 from time import sleep
-from typing import List, Any, Callable, Union
+from typing import List, Any, Callable, Optional, Union
 
 # Third-party imports
 import serial
-
+import time
 
 # CONSTANTS
-DRIVER_VERSION: str = "2.1.20251015dev"
+DRIVER_VERSION: str = "2.1.20260729dev"
 """
 current version of the driver
 """
@@ -36,11 +39,13 @@ logger = logging.getLogger("SerialBattery")
 
 PATH_CONFIG_DEFAULT: str = "config.default.ini"
 PATH_CONFIG_USER: str = "config.ini"
+PATH_BMS_DETECTION_CACHE: str = "bms_detection_cache.json"
 
 config = configparser.ConfigParser()
 path = Path(__file__).parents[0]
 default_config_file_path = str(path.joinpath(PATH_CONFIG_DEFAULT).absolute())
 custom_config_file_path = str(path.joinpath(PATH_CONFIG_USER).absolute())
+bms_detection_cache_file_path = str(path.joinpath(PATH_BMS_DETECTION_CACHE).absolute())
 try:
     config.read([default_config_file_path, custom_config_file_path])
 
@@ -262,7 +267,7 @@ BATTERY_ADDRESSES: list = get_list_from_config("DEFAULT", "BATTERY_ADDRESSES", s
 
 # --------- BMS Disconnect Behavior ---------
 BLOCK_ON_DISCONNECT: bool = get_bool_from_config("DEFAULT", "BLOCK_ON_DISCONNECT")
-BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES: float = get_float_from_config("DEFAULT", "BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES")
+BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES: int = get_int_from_config("DEFAULT", "BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES")
 BLOCK_ON_DISCONNECT_VOLTAGE_MIN: float = get_float_from_config("DEFAULT", "BLOCK_ON_DISCONNECT_VOLTAGE_MIN")
 BLOCK_ON_DISCONNECT_VOLTAGE_MAX: float = get_float_from_config("DEFAULT", "BLOCK_ON_DISCONNECT_VOLTAGE_MAX")
 
@@ -294,6 +299,10 @@ if not BLOCK_ON_DISCONNECT:
         BLOCK_ON_DISCONNECT = True
 
 
+# --------- BMS Cable Alarm ---------
+BMS_CABLE_ALARM: bool = get_bool_from_config("DEFAULT", "BMS_CABLE_ALARM")
+
+
 # --------- External Sensor for Current and/or SoC ---------
 EXTERNAL_SENSOR_DBUS_DEVICE: Union[str, None] = config["DEFAULT"]["EXTERNAL_SENSOR_DBUS_DEVICE"] or None
 EXTERNAL_SENSOR_DBUS_PATH_CURRENT: Union[str, None] = config["DEFAULT"]["EXTERNAL_SENSOR_DBUS_PATH_CURRENT"] or None
@@ -311,6 +320,8 @@ check_config_issue(
 CHARGE_MODE: int = get_int_from_config("DEFAULT", "CHARGE_MODE")
 CVL_RECALCULATION_EVERY: int = get_int_from_config("DEFAULT", "CVL_RECALCULATION_EVERY")
 CVL_RECALCULATION_ON_MAX_PERCENTAGE_CHANGE: int = get_int_from_config("DEFAULT", "CVL_RECALCULATION_ON_MAX_PERCENTAGE_CHANGE")
+CVL_RECOVERY_HOLD_SEC: int = get_int_from_config("DEFAULT", "CVL_RECOVERY_HOLD_SEC")
+CVL_RECOVERY_RATE_V_PER_SEC: float = get_float_from_config("DEFAULT", "CVL_RECOVERY_RATE_V_PER_SEC")
 
 
 # --------- Charge Voltage Limitation (affecting CVL) ---------
@@ -487,6 +498,22 @@ DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT: float = get_float_from_config("DEF
 """
 Defines the percentage of the maximum discharge current that the battery has to reach to recover from a limitation.
 """
+CCL_RECOVERY_HOLD_SEC: int = get_int_from_config("DEFAULT", "CCL_RECOVERY_HOLD_SEC")
+"""
+Seconds to hold CCL steady after a recovery condition is detected, before ramping begins.
+"""
+CCL_RECOVERY_RATE_A_PER_SEC: float = get_float_from_config("DEFAULT", "CCL_RECOVERY_RATE_A_PER_SEC")
+"""
+Ramp rate in A/s for charge current recovery. Set to 0 for instant recovery (old behavior).
+"""
+DCL_RECOVERY_HOLD_SEC: int = get_int_from_config("DEFAULT", "DCL_RECOVERY_HOLD_SEC")
+"""
+Seconds to hold DCL steady after a recovery condition is detected, before ramping begins.
+"""
+DCL_RECOVERY_RATE_A_PER_SEC: float = get_float_from_config("DEFAULT", "DCL_RECOVERY_RATE_A_PER_SEC")
+"""
+Ramp rate in A/s for discharge current recovery. Set to 0 for instant recovery (old behavior).
+"""
 
 
 # --------- Time-To-Go ---------
@@ -523,6 +550,11 @@ TEMPERATURE_NAMES: dict = {
     3: config["DEFAULT"]["TEMPERATURE_3_NAME"],
     4: config["DEFAULT"]["TEMPERATURE_4_NAME"],
 }
+TEMPERATURE_1_ADJUST: List[float] = get_list_from_config("DEFAULT", "TEMPERATURE_1_ADJUST", float)
+TEMPERATURE_2_ADJUST: List[float] = get_list_from_config("DEFAULT", "TEMPERATURE_2_ADJUST", float)
+TEMPERATURE_3_ADJUST: List[float] = get_list_from_config("DEFAULT", "TEMPERATURE_3_ADJUST", float)
+TEMPERATURE_4_ADJUST: List[float] = get_list_from_config("DEFAULT", "TEMPERATURE_4_ADJUST", float)
+TEMPERATURE_MOS_ADJUST: List[float] = get_list_from_config("DEFAULT", "TEMPERATURE_MOS_ADJUST", float)
 GUI_PARAMETERS_SHOW_ADDITIONAL_INFO: bool = get_bool_from_config("DEFAULT", "GUI_PARAMETERS_SHOW_ADDITIONAL_INFO")
 TELEMETRY: bool = get_bool_from_config("DEFAULT", "TELEMETRY")
 
@@ -540,6 +572,9 @@ USE_BMS_DVCC_VALUES: bool = get_bool_from_config("DEFAULT", "USE_BMS_DVCC_VALUES
 SOC_LOW_WARNING: float = get_float_from_config("DEFAULT", "SOC_LOW_WARNING")
 SOC_LOW_ALARM: float = get_float_from_config("DEFAULT", "SOC_LOW_ALARM")
 
+# -- LltJbd_Up16s settings
+UP16S_REQUIRE_DIRECT_CONNECTION: bool = get_bool_from_config("DEFAULT", "UP16S_REQUIRE_DIRECT_CONNECTION")
+
 # -- Daly settings
 INVERT_CURRENT_MEASUREMENT: int = get_int_from_config("DEFAULT", "INVERT_CURRENT_MEASUREMENT")
 
@@ -552,6 +587,22 @@ LIPRO_CELL_COUNT: int = get_int_from_config("DEFAULT", "LIPRO_CELL_COUNT")
 # -- UBMS settings
 UBMS_CAN_MODULE_SERIES: int = get_int_from_config("DEFAULT", "UBMS_CAN_MODULE_SERIES")
 UBMS_CAN_MODULE_PARALLEL: int = get_int_from_config("DEFAULT", "UBMS_CAN_MODULE_PARALLEL")
+
+
+# --- MQTT battery instance settings
+MQTT_TOPIC: list = get_list_from_config("DEFAULT", "MQTT_TOPIC", str)
+MQTT_BROKER_ADDRESS: str = config["DEFAULT"]["MQTT_BROKER_ADDRESS"]
+MQTT_BROKER_PORT: int = get_int_from_config("DEFAULT", "MQTT_BROKER_PORT")
+MQTT_TLS_ENABLED: bool = get_bool_from_config("DEFAULT", "MQTT_TLS_ENABLED")
+MQTT_TLS_PATH_TO_CA: str = config["DEFAULT"]["MQTT_TLS_PATH_TO_CA"]
+MQTT_TLS_INSECURE: bool = get_bool_from_config("DEFAULT", "MQTT_TLS_INSECURE")
+MQTT_USERNAME: str = config["DEFAULT"]["MQTT_USERNAME"]
+MQTT_PASSWORD: str = config["DEFAULT"]["MQTT_PASSWORD"]
+
+# --------- Raw BMS data capture (for troubleshooting) ---------
+CAPTURE_RAW_DATA: bool = get_bool_from_config("DEFAULT", "BMS_CAPTURE_RAW_DATA")
+CAPTURE_RAW_DATA_MAX_SIZE_MB: int = get_int_from_config("DEFAULT", "BMS_CAPTURE_RAW_DATA_MAX_SIZE_MB", 5)
+CAPTURE_RAW_DATA_BACKUP_COUNT: int = get_int_from_config("DEFAULT", "BMS_CAPTURE_RAW_DATA_BACKUP_COUNT", 3)
 
 
 HOMEASSISTANT_BASE_URL =config["DEFAULT"]["HOMEASSISTANT_BASE_URL"]
@@ -685,14 +736,56 @@ def bytearray_to_string(data: bytearray) -> str:
     return "".join(f"\\x{byte:02x}" for byte in data)
 
 
+def get_bms_detection_cache_key(port: str, address: bytearray = None) -> str:
+    """
+    Build the cache key used to store/look up the last detected BMS type for a port.
+    A port can host more than one BMS (BATTERY_ADDRESSES, CAN), so the bus address
+    - if any - is appended to keep those entries separate.
+
+    :param port: The port the BMS is connected to
+    :param address: The Modbus/CAN address of the BMS, if any
+    :return: The cache key
+    """
+    return port if not address else f"{port}#{bytearray_to_string(address)}"
+
+
+def load_bms_detection_cache() -> dict:
+    """
+    Load the cache that stores the last detected BMS type per port.
+    Returns an empty dict if the cache file does not exist or is invalid.
+
+    :return: Dictionary of cache key to BMS class name
+    """
+    try:
+        with open(bms_detection_cache_file_path, "r") as file:
+            data = json.load(file)
+            return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_bms_detection_cache(cache: dict) -> None:
+    """
+    Persist the cache that stores the last detected BMS type per port.
+
+    :param cache: Dictionary of cache key to BMS class name
+    :return: None
+    """
+    try:
+        with open(bms_detection_cache_file_path, "w") as file:
+            json.dump(cache, file)
+    except OSError as error_message:
+        logger.warning(f"Could not save BMS detection cache: {error_message}")
+
+
 def get_connection_error_message(battery_online: bool, suffix: str = None) -> None:
     """
     This method is used to check if the connection to the BMS is successful.
     It returns True if the connection is successful, otherwise False.
     It also handles the error logging if the connection is lost.
 
-    :battery_online: Boolean indicating if the battery is online
-    :suffix: Optional suffix to add to the error message
+    :parambattery_online: Boolean indicating if the battery is online
+    :param suffix: Optional suffix to add to the error message
     :return: True if the connection is successful, otherwise False
     """
     if battery_online is None:
@@ -702,6 +795,161 @@ def get_connection_error_message(battery_online: bool, suffix: str = None) -> No
     if battery_online:
         logger.error(">>> No response from battery. Connection lost or battery not recognized. Check cabeling!" + (" " + suffix if suffix else ""))
         return
+
+
+def generate_unique_identifier(port: str, address) -> str:
+    """
+    Generate a unique identifier for the battery based on the port and address.
+
+    :param port: Serial port
+    :param address: Battery address
+    :return: Unique identifier
+    """
+    return str(port).replace("/dev/", "") + "__" + (bytearray_to_string(address).replace("\\", "0") if address is not None else "0x01")
+
+
+# --------- Raw BMS data capture (for troubleshooting) ---------
+_capture_loggers: dict = {}
+_capture_last_time: dict = {}
+_capture_dir = path.joinpath("capture")
+
+
+def _capture_id(port: Any) -> str:
+    """
+    Turn a port/address (e.g. "/dev/ttyUSB0", a BLE MAC, a CAN interface name) into a filesystem-safe id.
+
+    :param port: Port, address or other connection identifier of the BMS
+    :return: Filesystem-safe id
+    """
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", str(port)) or "unknown"
+
+
+def _get_capture_logger(capture_id: str) -> logging.Logger:
+    """
+    Get (or lazily create) the rotating JSON Lines logger used to capture raw/decoded data for one BMS.
+
+    :param capture_id: Filesystem-safe id, see _capture_id()
+    :return: Logger writing to capture/<capture_id>.jsonl
+    """
+    if capture_id not in _capture_loggers:
+        cap_logger = logging.getLogger(f"SerialBattery.capture.{capture_id}")
+        cap_logger.setLevel(logging.INFO)
+        cap_logger.propagate = False
+        if not cap_logger.handlers:
+            _capture_dir.mkdir(exist_ok=True)
+            handler = logging.handlers.RotatingFileHandler(
+                str(_capture_dir.joinpath(f"{capture_id}.jsonl")),
+                maxBytes=CAPTURE_RAW_DATA_MAX_SIZE_MB * 1024 * 1024,
+                backupCount=CAPTURE_RAW_DATA_BACKUP_COUNT,
+            )
+            handler.setFormatter(logging.Formatter("%(message)s"))
+            cap_logger.addHandler(handler)
+        _capture_loggers[capture_id] = cap_logger
+    return _capture_loggers[capture_id]
+
+
+def _capture_serialize(value: Any) -> Any:
+    """
+    Recursively reduce a value to something JSON serializable for the capture log.
+    Objects that look like battery.Cell (duck-typed via .voltage/.balance) are unwrapped to a dict,
+    everything else that isn't a plain primitive/list/dict is replaced by its type name so that
+    non-serializable internals (serial ports, BLE clients, ...) never break the capture.
+
+    :param value: Value to serialize
+    :return: JSON-serializable representation of the value
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        return value.hex()
+    if hasattr(value, "voltage") and hasattr(value, "balance"):
+        return {"voltage": value.voltage, "balance": value.balance}
+    if isinstance(value, dict):
+        return {str(k): _capture_serialize(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_capture_serialize(v) for v in value]
+    return f"<{type(value).__name__}>"
+
+
+def capture_raw_data(port: Any, direction: str, data: Any) -> None:
+    """
+    Append a raw tx/rx record to the capture log for this BMS connection, if BMS_CAPTURE_RAW_DATA is enabled.
+    No-op (and virtually free) when disabled.
+
+    :param port: Port, address or other connection identifier of the BMS
+    :param direction: "tx" for data sent to the BMS, "rx" for data received from it
+    :param data: Raw bytes (or any other request/response payload, e.g. Modbus registers or a CAN frame)
+    """
+    if not CAPTURE_RAW_DATA or not data:
+        return
+    try:
+        record = {
+            "t": time.time(),
+            "dir": direction,
+            "raw": data.hex() if isinstance(data, (bytes, bytearray)) else _capture_serialize(data),
+        }
+        _get_capture_logger(_capture_id(port)).info(json.dumps(record))
+    except Exception:
+        logger.exception("capture_raw_data exception")
+
+
+def capture_decoded_data(port: Any, duration: float, success: bool, battery_obj: object) -> None:
+    """
+    Append a decoded-data + timing record to the capture log for this BMS connection, if
+    BMS_CAPTURE_RAW_DATA is enabled. No-op (and virtually free) when disabled.
+
+    :param port: Port, address or other connection identifier of the BMS
+    :param duration: How long the refresh_data() call took, in seconds
+    :param success: Whether refresh_data() reported success
+    :param battery_obj: The battery instance to snapshot (its __dict__ is serialized)
+    """
+    if not CAPTURE_RAW_DATA:
+        return
+    try:
+        capture_id = _capture_id(port)
+        now = time.time()
+        dt_since_last = now - _capture_last_time.get(capture_id, now)
+        _capture_last_time[capture_id] = now
+        record = {
+            "t": now,
+            "dir": "decoded",
+            "dt_since_last": round(dt_since_last, 3),
+            "duration_ms": round(duration * 1000, 1),
+            "success": success,
+            "decoded": _capture_serialize(vars(battery_obj)),
+        }
+        _get_capture_logger(capture_id).info(json.dumps(record))
+    except Exception:
+        logger.exception("capture_decoded_data exception")
+
+
+def wrap_modbus_capture(instrument: object, port: Any) -> object:
+    """
+    Wrap a minimalmodbus.Instrument's read_* methods so each call (register/address requested and the
+    value returned) is appended to the raw capture log, if BMS_CAPTURE_RAW_DATA is enabled. Modbus
+    abstracts away the wire bytes, so the request/response at the register level is the earliest point
+    "raw-ish" data is available without patching the vendored ext/minimalmodbus.py library.
+    No-op (returns the instrument unchanged) when disabled.
+
+    :param instrument: A minimalmodbus.Instrument instance
+    :param port: Port, address or other connection identifier of the BMS
+    :return: The same instrument, with read_* methods wrapped if capturing is enabled
+    """
+    if not CAPTURE_RAW_DATA:
+        return instrument
+
+    def make_wrapper(name: str, func: Callable) -> Callable:
+        def wrapper(*args, **kwargs):
+            result = func(*args, **kwargs)
+            capture_raw_data(port, "rx", {"call": name, "args": args, "result": result})
+            return result
+
+        return wrapper
+
+    for method_name in ("read_register", "read_registers", "read_long", "read_string", "read_bit", "read_float"):
+        if hasattr(instrument, method_name):
+            setattr(instrument, method_name, make_wrapper(method_name, getattr(instrument, method_name)))
+    return instrument
 
 
 def open_serial_port(port: str, baud: int) -> Union[serial.Serial, None]:
@@ -724,6 +972,71 @@ def open_serial_port(port: str, baud: int) -> Union[serial.Serial, None]:
 
 def read_serialport_data(
     ser: serial.Serial,
+    request: bytearray,
+    timeout_seconds: float,
+    extra_length: int,
+    payload_length_pos: int,
+    payload_length_size: str = "B",
+    length_fixed: Optional[int] = None,
+) -> Optional[bytearray]:
+    """
+    Serial port read helper that fixes some shortcomings of read_serialport_data_deprecated() and is more reliable.
+
+    :param ser: Serial port
+    :param request: Data to send
+    :param timeout_seconds: Maximum time to wait for data
+    :param extra_length: Length of everything else that's not counted in the payload length value contained at payload_length_pos. For example it's
+      most likely the checksum and the header including the payload length field itself.
+    :param payload_length_pos: Position of the payload length field in the packet
+    :param payload_length_size: Size of the payload length field, e.g. "B", "H", "I", "L"
+    :param length_fixed: Total fixed length of the data to read. If set, all other length arguments are ignored. If not set, length will be read from the data
+    :return: Data read from the serial port or None on error
+    """
+
+    try:
+        ser.reset_input_buffer()
+        ser.write(request)
+        capture_raw_data(ser.port, "tx", request)
+
+        length_struct = Struct(">" + payload_length_size)
+        if length_fixed is None:
+            bytes_needed = payload_length_pos + length_struct.size
+            payload_length = None
+        else:
+            bytes_needed = length_fixed
+            payload_length = length_fixed
+
+        data = bytearray()
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            chunk = ser.read(max(1, ser.in_waiting))
+            if chunk:
+                data.extend(chunk)
+
+            # Parse length once we have enough bytes
+            if payload_length is None and len(data) >= bytes_needed:
+                payload_length = length_struct.unpack_from(data, payload_length_pos)[0]
+                # Update bytes needed for the complete message
+                bytes_needed = payload_length + extra_length
+
+            # Check if we have the complete message
+            if payload_length is not None and len(data) >= bytes_needed:
+                capture_raw_data(ser.port, "rx", data)
+                return data
+
+            # Sleep to prevent busy-waiting
+            sleep(0.01)
+
+        # Timeout occurred
+        return None
+
+    except Exception:
+        logger.exception("read_serialport_data exception")
+        return None
+
+
+def read_serialport_data_deprecated(
+    ser: serial.Serial,
     command: bytearray,
     length_pos: int,
     length_check: int,
@@ -732,7 +1045,7 @@ def read_serialport_data(
     battery_online: bool = True,
 ) -> bytearray:
     """
-    Read data from a serial port
+    Read data from a serial port. Deprecated, use read_serialport_data() instead.
 
     :param ser: Serial port
     :param command: Command to send
@@ -747,6 +1060,7 @@ def read_serialport_data(
         ser.flushOutput()
         ser.flushInput()
         ser.write(command)
+        capture_raw_data(ser.port, "tx", command)
 
         if length_size.upper() == "B":
             length_byte_size = 1
@@ -790,6 +1104,7 @@ def read_serialport_data(
                 get_connection_error_message(battery_online, "[len:" + str(len(data)) + "/" + str(length + length_check) + "]")
                 return False
 
+        capture_raw_data(ser.port, "rx", data)
         return data
 
     except serial.SerialException as e:
@@ -834,7 +1149,7 @@ def read_serial_data(
     ser = None  # Initialize ser to None
     try:
         with serial.Serial(port, baudrate=baud, timeout=0.1) as ser:
-            return read_serialport_data(ser, command, length_pos, length_check, length_fixed, length_size, battery_online)
+            return read_serialport_data_deprecated(ser, command, length_pos, length_check, length_fixed, length_size, battery_online)
 
     except serial.SerialException as e:
         logger.error(e)
