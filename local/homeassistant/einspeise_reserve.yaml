@@ -52,10 +52,11 @@ automation:
       aenderung_w: "{{ anstieg_w if ueberschuss_w > 0 else ueberschuss_w }}"
       batteriespannung_v: "{{ states(batteriespannung_sensor) | float(0) }}"
       max_ladestrom_a: "{{ states('input_number.max_battery_charge_current') | float(0) }}"
-      berechneter_ladestrom_a: "{{ (ladeleistung_w + aenderung_w) / batteriespannung_v if messwerte_gueltig else 0 }}"
+      eingestelltes_limit_w: "{{ states(ladeleistung_limit_entity) | float(-1) }}"
+      basis_w: "{{ [ladeleistung_w, eingestelltes_limit_w] | max if ueberschuss_w > 0 else ladeleistung_w }}"
+      berechneter_ladestrom_a: "{{ (basis_w + aenderung_w) / batteriespannung_v if messwerte_gueltig else 0 }}"
       gewuenschter_ladestrom_a: "{{ [[berechneter_ladestrom_a, 0] | max, max_ladestrom_a] | min }}"
       gewuenschtes_limit_w: "{{ ((gewuenschter_ladestrom_a * batteriespannung_v / 50) | round(0)) * 50 }}"
-      eingestelltes_limit_w: "{{ states(ladeleistung_limit_entity) | float(-1) }}"
       limit_weicht_ab: >-
         {{ (gewuenschtes_limit_w - eingestelltes_limit_w) | abs >= schreib_totband_w
            or (gewuenschtes_limit_w == 0) != (eingestelltes_limit_w == 0) }}
