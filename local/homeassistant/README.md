@@ -8,7 +8,7 @@ Stellgröße ist `number.gx_device_ess_maximale_ladeleistung` (ESS-Ladeleistungs
 
 1. In `configuration.yaml` Packages aktivieren: `homeassistant: { packages: !include_dir_named packages }`
 2. `einspeise_reserve.yaml` nach `<config>/packages/` kopieren, Konfiguration prüfen und neu laden.
-3. Im Dashboard `einspeise_reserve_w` (1000), `einspeise_reserve_max_ladeleistung_w` (3500) und `einspeise_reserve_max_anstieg_w` (500) setzen.
+3. Im Dashboard `einspeise_reserve_w` (1000) und `einspeise_reserve_max_anstieg_w` (500) setzen.
 
 ## Erst beobachten, dann aktivieren
 
@@ -26,7 +26,8 @@ Greift die Begrenzung nicht, bleibt die Regelung wirkungslos. Dann muss ein ande
 
 ## Verhalten
 
-- Einspeisung über der Reserve: Ladelimit steigt um die Hälfte des Überschusses, höchstens um `max_anstieg_w` je Durchlauf (alle 10 s).
+- Einspeisung über der Reserve: Ladelimit steigt um die Hälfte des Überschusses (fester Dämpfungsfaktor 0,5 im Regler), höchstens um `max_anstieg_w` je Durchlauf (alle 10 s).
+- Obergrenze: Das Limit wird als Strom (Watt geteilt durch Batteriespannung) auf `input_number.max_battery_charge_current` begrenzt (210 A = 3 Multiplus à 70 A) und dann wieder in Watt umgerechnet.
 - Einspeisung unter der Reserve: Ladelimit sinkt sofort um das Defizit, nie unter 0 W.
 - Netz- oder Batteriesensor nicht verfügbar: Ladelimit 0 W.
 - Ausschalten von `einspeise_reserve_aktiv` setzt die Begrenzung auf -1 zurück.

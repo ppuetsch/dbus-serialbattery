@@ -12,13 +12,6 @@ input_number:
     unit_of_measurement: W
     mode: box
     icon: mdi:transmission-tower-export
-  einspeise_reserve_max_ladeleistung_w:
-    name: Einspeise-Reserve maximale Ladeleistung
-    min: 0
-    max: 5000
-    step: 50
-    unit_of_measurement: W
-    mode: box
   einspeise_reserve_max_anstieg_w:
     name: Einspeise-Reserve maximaler Anstieg je Durchlauf
     min: 50
@@ -44,20 +37,24 @@ automation:
     variables:
       netz_sensor: sensor.ehz_zaehler_sml_power_curr
       batterieleistung_sensor: sensor.gx_device_dc_batterie_leistung
+      batteriespannung_sensor: sensor.gx_device_dc_batterie_spannung
       ladeleistung_limit_entity: number.gx_device_ess_maximale_ladeleistung
       anstiegs_faktor: 0.5
       schreib_totband_w: 100
-      messwerte_gueltig: "{{ is_number(states(netz_sensor)) and is_number(states(batterieleistung_sensor)) }}"
+      messwerte_gueltig: >-
+        {{ is_number(states(netz_sensor)) and is_number(states(batterieleistung_sensor))
+           and is_number(states(batteriespannung_sensor)) }}
       einspeisung_w: "{{ (states(netz_sensor) | float(0)) * -1 }}"
       ladeleistung_w: "{{ [states(batterieleistung_sensor) | float(0), 0] | max }}"
       ueberschuss_w: "{{ einspeisung_w - states('input_number.einspeise_reserve_w') | float(0) }}"
       max_anstieg_w: "{{ states('input_number.einspeise_reserve_max_anstieg_w') | float(0) }}"
       anstieg_w: "{{ [ueberschuss_w * anstiegs_faktor, max_anstieg_w] | min }}"
       aenderung_w: "{{ anstieg_w if ueberschuss_w > 0 else ueberschuss_w }}"
-      max_ladeleistung_w: "{{ states('input_number.einspeise_reserve_max_ladeleistung_w') | float(0) }}"
-      gewuenschtes_limit_w: >-
-        {{ ([[ladeleistung_w + aenderung_w, 0] | max, max_ladeleistung_w] | min / 50) | round(0) * 50
-           if messwerte_gueltig else 0 }}
+      batteriespannung_v: "{{ states(batteriespannung_sensor) | float(0) }}"
+      max_ladestrom_a: "{{ states('input_number.max_battery_charge_current') | float(0) }}"
+      berechneter_ladestrom_a: "{{ (ladeleistung_w + aenderung_w) / batteriespannung_v if messwerte_gueltig else 0 }}"
+      gewuenschter_ladestrom_a: "{{ [[berechneter_ladestrom_a, 0] | max, max_ladestrom_a] | min }}"
+      gewuenschtes_limit_w: "{{ ((gewuenschter_ladestrom_a * batteriespannung_v / 50) | round(0)) * 50 }}"
       eingestelltes_limit_w: "{{ states(ladeleistung_limit_entity) | float(-1) }}"
       limit_weicht_ab: >-
         {{ (gewuenschtes_limit_w - eingestelltes_limit_w) | abs >= schreib_totband_w
