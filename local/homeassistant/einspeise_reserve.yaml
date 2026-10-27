@@ -22,7 +22,7 @@ input_number:
   einspeise_reserve_ladelimit_w:
     name: Einspeise-Reserve berechnetes Ladelimit
     min: 0
-    max: 5000
+    max: 15000
     step: 1
     unit_of_measurement: W
     mode: box
